@@ -793,7 +793,7 @@
         }
 
         /**
-         * 指定フレームを等倍で画面中央に描画する
+         * 指定フレームをプレビュー時のグリッドセルと同じサイズで画面中央に描画する
          * @param {number} frameIndex - フレーム番号（0-3）
          * @param {number} vw - ビデオの幅
          * @param {number} vh - ビデオの高さ
@@ -803,11 +803,29 @@
         function drawFullFrame(frameIndex, vw, vh, w, h) {
             const { sx, sy, sw, sh } = getFrameRect(frameIndex, vw, vh);
 
-            // 等倍で中央に描画（引き伸ばさない）
+            // プレビュー時と同じスケーリング係数を計算
+            const videoAspect = vw / vh;
+            const canvasAspect = w / h;
+            let scale;
+
+            if (canvasAspect > videoAspect) {
+                // キャンバスの方が横長: 幅に合わせる
+                scale = w / vw;
+            } else {
+                // キャンバスの方が縦長: 高さに合わせる
+                scale = h / vh;
+            }
+
+            // スケーリングされたフレームサイズ（プレビュー時のグリッドセルと同じ大きさ）
+            const scaledWidth = sw * scale;
+            const scaledHeight = sh * scale;
+
+            // 中央に配置
+            const drawX = (w - scaledWidth) / 2;
+            const drawY = (h - scaledHeight) / 2;
+
             // 背景は既にdraw()でクリア済み（黒）
-            const drawX = (w - sw) / 2;
-            const drawY = (h - sh) / 2;
-            state.elements.ctx.drawImage(state.elements.video, sx, sy, sw, sh, drawX, drawY, sw, sh);
+            state.elements.ctx.drawImage(state.elements.video, sx, sy, sw, sh, drawX, drawY, scaledWidth, scaledHeight);
         }
 
         /**
