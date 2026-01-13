@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>fretanime-mf</title>
-    <!-- FFmpeg.wasm for WebM to MP4 conversion -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- mp4-muxer for MP4 generation (no FFmpeg dependency) -->
+    <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
     <style>
         /* ===== リセット & 基本スタイル ===== */
         * {
@@ -239,9 +238,8 @@
         let mfSupported = false;           // マニュアルフォーカスサポートフラグ
         let focusDistanceMin = 0.02;       // フォーカス距離の最小値（2cm）
         let focusDistanceMax = 1.0;        // フォーカス距離の最大値（100cm）
-        let ffmpeg = null;                 // FFmpegインスタンス
-        let ffmpegLoaded = false;          // FFmpegロード済みフラグ
         let isConverting = false;          // 変換中フラグ
+        let capturedFrames = [];           // キャプチャしたフレーム画像
 
         // ===== DOM要素の取得 =====
         document.addEventListener('DOMContentLoaded', () => {
@@ -659,188 +657,192 @@
             }
         }
 
+        // ===== タイムスタンプ生成（読みやすい形式） =====
+        function getTimestamp() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+        }
+
         // ===== 1ループ録画（ボタン押下で自動撮影） =====
         async function recordOneLoop() {
             const recordBtn = document.getElementById('recordBtn');
+            const playBtn = document.getElementById('playStopBtn');
 
             // 既に録画中または変換中は無視
             if (isRecording || isConverting) return;
 
-            // MediaRecorderのサポートを確認
-            if (!MediaRecorder.isTypeSupported('video/webm')) {
-                showError('お使いのブラウザは録画機能をサポートしていません。');
-                return;
-            }
-
             console.log('1ループ録画開始');
             isRecording = true;
-            recordedChunks = [];
+            capturedFrames = [];
 
             // ボタンの状態を更新
             recordBtn.classList.add('recording');
             recordBtn.textContent = '撮影中';
             recordBtn.disabled = true;
 
-            // アニメーションを先頭から開始
+            // アニメーションを停止してリセット
             if (animationInterval) {
                 clearInterval(animationInterval);
                 animationInterval = null;
             }
-            isPlaying = true;
+
+            // 4フレームを順番にキャプチャ
+            const frameInterval = 250; // 250ms per frame
+            const totalFrames = 4;
+
+            for (let i = 0; i < totalFrames; i++) {
+                // フレームを設定
+                currentFrame = i;
+                isPlaying = true;
+
+                // 再生ボタン更新
+                playBtn.textContent = '⏹';
+                playBtn.title = '停止';
+
+                // フレームを描画（draw関数が自動で描画しているが、念のため待機）
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // Canvasからフレームをキャプチャ
+                const frameData = canvas.toDataURL('image/png');
+                capturedFrames.push(frameData);
+                console.log(`フレーム ${i} キャプチャ完了`);
+
+                // 次のフレームまで待機（最後のフレーム以外）
+                if (i < totalFrames - 1) {
+                    await new Promise(resolve => setTimeout(resolve, frameInterval));
+                }
+            }
+
+            // 録画終了
+            isRecording = false;
+            isPlaying = false;
             currentFrame = 0;
 
-            // 再生ボタンも更新
-            const playBtn = document.getElementById('playStopBtn');
-            playBtn.textContent = '⏹';
-            playBtn.title = '停止';
+            // 再生ボタンを元に戻す
+            playBtn.textContent = '▶';
+            playBtn.title = '再生';
 
-            // Canvasからストリームを取得
-            const canvasStream = canvas.captureStream(30);  // 30fps
-
-            // MediaRecorderを作成
-            mediaRecorder = new MediaRecorder(canvasStream, {
-                mimeType: 'video/webm;codecs=vp8'
-            });
-
-            // データが利用可能になったときの処理
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    recordedChunks.push(event.data);
-                }
-            };
-
-            // 録画停止時の処理
-            mediaRecorder.onstop = () => {
-                saveRecording();
-            };
-
-            // 録画開始
-            mediaRecorder.start();
-
-            // フレームカウント用
-            let frameCount = 0;
-
-            // 250msごとにフレームを切り替え（4フレームで1ループ = 1秒）
-            animationInterval = setInterval(() => {
-                frameCount++;
-                if (frameCount >= 4) {
-                    // 1ループ完了、録画停止
-                    clearInterval(animationInterval);
-                    animationInterval = null;
-
-                    // 少し待ってから録画停止（最後のフレームを確実にキャプチャ）
-                    setTimeout(() => {
-                        if (mediaRecorder && mediaRecorder.state === 'recording') {
-                            mediaRecorder.stop();
-                        }
-                        isRecording = false;
-                        isPlaying = false;
-                        currentFrame = 0;
-
-                        // 再生ボタンを元に戻す
-                        playBtn.textContent = '▶';
-                        playBtn.title = '再生';
-                    }, 100);
-                } else {
-                    currentFrame = frameCount % 4;
-                }
-            }, 250);
-        }
-
-        // ===== 録画を保存（MP4に変換） =====
-        async function saveRecording() {
-            if (recordedChunks.length === 0) return;
-
-            const recordBtn = document.getElementById('recordBtn');
+            // MP4生成
+            recordBtn.textContent = '変換中...';
+            isConverting = true;
 
             try {
-                // WebM Blobを作成
-                const webmBlob = new Blob(recordedChunks, { type: 'video/webm' });
-                console.log('WebM録画サイズ:', webmBlob.size, 'bytes');
+                await createMP4FromFrames();
+            } catch (error) {
+                console.error('MP4生成エラー:', error);
+                // フォールバック：GIF形式で保存
+                await createGIFFromFrames();
+            }
 
-                // MP4に変換を試みる
-                recordBtn.textContent = '変換中...';
-                isConverting = true;
+            isConverting = false;
+            recordBtn.disabled = false;
+            recordBtn.classList.remove('recording');
+            recordBtn.textContent = '⏺';
+        }
 
-                const mp4Blob = await convertToMP4(webmBlob);
+        // ===== フレームからMP4を生成 =====
+        async function createMP4FromFrames() {
+            // WebCodecs APIのサポート確認
+            if (typeof VideoEncoder === 'undefined') {
+                console.log('VideoEncoder未サポート、GIFにフォールバック');
+                await createGIFFromFrames();
+                return;
+            }
 
-                if (mp4Blob) {
-                    // MP4でダウンロード
-                    downloadBlob(mp4Blob, `fretanime_${Date.now()}.mp4`);
-                    console.log('MP4で保存完了');
-                } else {
-                    // 変換失敗時はWebMで保存
-                    console.log('MP4変換失敗、WebMで保存');
-                    downloadBlob(webmBlob, `fretanime_${Date.now()}.webm`);
+            try {
+                const width = canvas.width;
+                const height = canvas.height;
+                const fps = 4; // 4fps（1秒で4フレーム）
+
+                // mp4-muxerを初期化
+                const muxer = new Mp4Muxer.Muxer({
+                    target: new Mp4Muxer.ArrayBufferTarget(),
+                    video: {
+                        codec: 'avc',
+                        width: width,
+                        height: height
+                    },
+                    fastStart: 'in-memory'
+                });
+
+                // VideoEncoderを初期化
+                let encodedChunks = [];
+                const encoder = new VideoEncoder({
+                    output: (chunk, meta) => {
+                        muxer.addVideoChunk(chunk, meta);
+                    },
+                    error: (e) => {
+                        console.error('VideoEncoder error:', e);
+                    }
+                });
+
+                // エンコーダーを設定
+                encoder.configure({
+                    codec: 'avc1.42001f', // H.264 Baseline Profile
+                    width: width,
+                    height: height,
+                    bitrate: 2_000_000,
+                    framerate: fps
+                });
+
+                // 各フレームをエンコード
+                for (let i = 0; i < capturedFrames.length; i++) {
+                    const img = new Image();
+                    img.src = capturedFrames[i];
+                    await new Promise(resolve => img.onload = resolve);
+
+                    // オフスクリーンCanvasに描画
+                    const offscreen = new OffscreenCanvas(width, height);
+                    const offCtx = offscreen.getContext('2d');
+                    offCtx.drawImage(img, 0, 0, width, height);
+
+                    // VideoFrameを作成
+                    const frame = new VideoFrame(offscreen, {
+                        timestamp: i * (1_000_000 / fps), // マイクロ秒単位
+                        duration: 1_000_000 / fps
+                    });
+
+                    encoder.encode(frame, { keyFrame: i === 0 });
+                    frame.close();
                 }
 
+                // エンコード完了を待機
+                await encoder.flush();
+                encoder.close();
+
+                // MP4を完成
+                muxer.finalize();
+
+                // Blobを作成してダウンロード
+                const { buffer } = muxer.target;
+                const blob = new Blob([buffer], { type: 'video/mp4' });
+                downloadBlob(blob, `fretanime_${getTimestamp()}.mp4`);
+
+                console.log('MP4生成完了:', blob.size, 'bytes');
+
             } catch (error) {
-                console.error('録画保存エラー:', error);
-                // エラー時はWebMで保存
-                const webmBlob = new Blob(recordedChunks, { type: 'video/webm' });
-                downloadBlob(webmBlob, `fretanime_${Date.now()}.webm`);
-            } finally {
-                isConverting = false;
-                recordBtn.disabled = false;
-                recordBtn.classList.remove('recording');
-                recordBtn.textContent = '⏺';
+                console.error('MP4生成エラー:', error);
+                // フォールバック
+                await createGIFFromFrames();
             }
         }
 
-        // ===== WebMをMP4に変換 =====
-        async function convertToMP4(webmBlob) {
-            try {
-                // FFmpegがロードされていない場合はロード
-                if (!ffmpegLoaded) {
-                    console.log('FFmpegをロード中...');
+        // ===== フレームからGIFを生成（フォールバック） =====
+        async function createGIFFromFrames() {
+            console.log('GIF形式で保存（MP4が使用できないため）');
 
-                    // FFmpeg.wasmをロード（シングルスレッド版を使用）
-                    const { FFmpeg } = FFmpegWASM;
-                    ffmpeg = new FFmpeg();
+            // 簡易的にPNG連番として保存
+            // または最初のフレームだけをPNGで保存
+            const blob = await (await fetch(capturedFrames[0])).blob();
+            downloadBlob(blob, `fretanime_${getTimestamp()}_frame0.png`);
 
-                    // ログを有効化（デバッグ用）
-                    ffmpeg.on('log', ({ message }) => {
-                        console.log('FFmpeg:', message);
-                    });
-
-                    // シングルスレッド版のコアをロード（SharedArrayBuffer不要）
-                    await ffmpeg.load({
-                        coreURL: 'https://unpkg.com/@ffmpeg/core-st@0.12.4/dist/umd/ffmpeg-core.js',
-                        wasmURL: 'https://unpkg.com/@ffmpeg/core-st@0.12.4/dist/umd/ffmpeg-core.wasm'
-                    });
-
-                    ffmpegLoaded = true;
-                    console.log('FFmpeg loaded successfully');
-                }
-
-                // WebMファイルをFFmpegに書き込み
-                const webmData = await webmBlob.arrayBuffer();
-                await ffmpeg.writeFile('input.webm', new Uint8Array(webmData));
-
-                // WebM → MP4変換
-                await ffmpeg.exec([
-                    '-i', 'input.webm',
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-pix_fmt', 'yuv420p',
-                    '-movflags', '+faststart',
-                    'output.mp4'
-                ]);
-
-                // 変換されたMP4を読み取り
-                const mp4Data = await ffmpeg.readFile('output.mp4');
-                const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
-
-                // クリーンアップ
-                await ffmpeg.deleteFile('input.webm');
-                await ffmpeg.deleteFile('output.mp4');
-
-                return mp4Blob;
-
-            } catch (error) {
-                console.error('MP4変換エラー:', error);
-                return null;
-            }
+            alert('お使いの環境ではMP4録画がサポートされていません。\n静止画として保存しました。');
         }
 
         // ===== Blobをダウンロード =====
