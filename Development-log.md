@@ -57,4 +57,54 @@ fretanime-mf/
 └── fretanime-mf_specification_v1.1.md # 仕様書
 ```
 
+#### GitHubリポジトリ作成・Vercelデプロイ
+
+※以下の作業はClaude Codeクラッシュ前に実施（ログ未記録だったため追記）
+
+- GitHubにリポジトリを作成: `Developlayer/fretanime-mf`
+- 初期コミット（v1.0）をプッシュ
+- Vercelと連携してデプロイ
+- デプロイURL: https://fretanime-mf.vercel.app/
+
+---
+
+### 2026-01-14
+
+#### Chromebookでの動作テスト・バグ発見
+
+NEC Chromebook Y2で動作確認を実施したところ、以下の問題が発生：
+
+**症状:**
+- カメラ権限を許可すると、カメラ横のランプは点灯（カメラアクセス成功）
+- しかし画面にはグリッドラインとUIのみ表示され、カメラ映像が映らない（背景が真っ暗）
+
+#### バグ修正
+
+**原因分析:**
+
+1. **video要素の`display: none`問題**
+   - ChromeOSでは`display: none`のvideo要素は映像処理が正しく行われない可能性がある
+   - ストリームは取得できているが、video要素が描画可能な状態にならない
+
+2. **描画ループの開始タイミング問題**
+   - 複数のイベント（onloadeddata, oncanplay, onplaying）で描画ループを開始しようとしていたが、条件分岐が複雑で開始されないケースがあった
+
+3. **autoplay制限**
+   - ChromeOSでのautoplay制限により`video.play()`が失敗する可能性
+
+**修正内容:**
+
+| 修正箇所 | 変更前 | 変更後 |
+|----------|--------|--------|
+| video要素のCSS | `display: none` | 画面外配置（position: fixed, top: -9999px） |
+| video要素の属性 | なし | `width="1280" height="720"` 追加 |
+| 描画ループ開始 | イベント待機後に開始 | 即座に開始、準備中メッセージ表示 |
+| play()呼び出し | 直接呼び出し | loadedmetadata後に呼び出し |
+| フォールバック | 2段階 | 3段階（exact → prefer → 制約なし） |
+| ユーザー操作対応 | clickのみ | click + touchstart |
+
+**コミット:** `31ddfdf` - fix: Chromebookでカメラ映像が表示されない問題を修正
+
+**デプロイ:** GitHubプッシュ後、Vercelが自動デプロイ
+
 ---
