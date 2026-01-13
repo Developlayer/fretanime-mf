@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>fretanime-mf</title>
+    <!-- FFmpeg.wasm for WebM to MP4 conversion -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
     <style>
         /* ===== リセット & 基本スタイル ===== */
         * {
@@ -63,25 +66,25 @@
             right: 20px;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 20px;
             background: rgba(0, 0, 0, 0.6);
-            padding: 10px 15px;
-            border-radius: 8px;
+            padding: 20px 30px;
+            border-radius: 16px;
             z-index: 100;
         }
 
         /* ===== ボタン共通スタイル ===== */
         button {
-            padding: 10px 15px;
+            padding: 20px 30px;
             border: none;
-            border-radius: 6px;
+            border-radius: 12px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 28px;
             font-weight: bold;
             color: white;
             background: rgba(255, 255, 255, 0.2);
             transition: background 0.2s, transform 0.1s;
-            min-width: 44px;
+            min-width: 88px;
         }
 
         button:hover {
@@ -120,24 +123,24 @@
         .focus-control {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 16px;
         }
 
         .focus-slider {
-            width: 100px;
-            height: 6px;
+            width: 200px;
+            height: 12px;
             -webkit-appearance: none;
             appearance: none;
             background: rgba(255, 255, 255, 0.3);
-            border-radius: 3px;
+            border-radius: 6px;
             outline: none;
         }
 
         .focus-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 16px;
-            height: 16px;
+            width: 32px;
+            height: 32px;
             background: white;
             border-radius: 50%;
             cursor: pointer;
@@ -152,29 +155,29 @@
         }
 
         .focus-value {
-            min-width: 55px;
+            min-width: 110px;
             color: white;
-            font-size: 12px;
+            font-size: 24px;
             text-align: center;
         }
 
         /* ===== 区切り線 ===== */
         .divider {
-            width: 1px;
-            height: 24px;
+            width: 2px;
+            height: 48px;
             background: rgba(255, 255, 255, 0.3);
         }
 
         /* ===== グリッドモードボタン ===== */
         .grid-buttons {
             display: flex;
-            gap: 5px;
+            gap: 10px;
         }
 
         /* ===== 再生/録画ボタン ===== */
         .playback-buttons {
             display: flex;
-            gap: 5px;
+            gap: 10px;
         }
     </style>
 </head>
@@ -194,7 +197,7 @@
         <div class="focus-control">
             <button id="focusModeBtn" disabled>AF</button>
             <input type="range" id="focusSlider" class="focus-slider"
-                   min="0" max="200" value="100" step="1" disabled>
+                   min="2" max="100" value="50" step="1" disabled>
             <span id="focusValue" class="focus-value">AUTO</span>
         </div>
 
@@ -213,8 +216,7 @@
 
         <!-- 再生/録画ボタン -->
         <div class="playback-buttons">
-            <button id="playBtn" title="再生">▶</button>
-            <button id="stopBtn" title="停止" disabled>⏹</button>
+            <button id="playStopBtn" title="再生/停止">▶</button>
             <button id="recordBtn" title="録画">⏺</button>
         </div>
     </div>
@@ -235,8 +237,11 @@
         let focusMode = 'continuous';      // フォーカスモード: 'continuous' or 'manual'
         let focusSupported = false;        // フォーカス制御サポートフラグ
         let mfSupported = false;           // マニュアルフォーカスサポートフラグ
-        let focusDistanceMin = 0;          // フォーカス距離の最小値
-        let focusDistanceMax = 2;          // フォーカス距離の最大値
+        let focusDistanceMin = 0.02;       // フォーカス距離の最小値（2cm）
+        let focusDistanceMax = 1.0;        // フォーカス距離の最大値（100cm）
+        let ffmpeg = null;                 // FFmpegインスタンス
+        let ffmpegLoaded = false;          // FFmpegロード済みフラグ
+        let isConverting = false;          // 変換中フラグ
 
         // ===== DOM要素の取得 =====
         document.addEventListener('DOMContentLoaded', () => {
@@ -271,9 +276,8 @@
             document.getElementById('columnBtn').addEventListener('click', () => setGridMode('column'));
             document.getElementById('rowBtn').addEventListener('click', () => setGridMode('row'));
 
-            // 再生/停止ボタン
-            document.getElementById('playBtn').addEventListener('click', startAnimation);
-            document.getElementById('stopBtn').addEventListener('click', stopAnimation);
+            // 再生/停止ボタン（トグル）
+            document.getElementById('playStopBtn').addEventListener('click', toggleAnimation);
 
             // 録画ボタン
             document.getElementById('recordBtn').addEventListener('click', toggleRecording);
@@ -426,8 +430,11 @@
                 mfSupported = supportedModes.includes('manual');
 
                 if (mfSupported && capabilities.focusDistance) {
-                    focusDistanceMin = capabilities.focusDistance.min || 0;
-                    focusDistanceMax = capabilities.focusDistance.max || 2;
+                    // カメラの能力を取得し、2-100cmの範囲内でクリップ
+                    const cameraMin = capabilities.focusDistance.min || 0;
+                    const cameraMax = capabilities.focusDistance.max || 2;
+                    focusDistanceMin = Math.max(cameraMin, 0.02);  // 最小2cm
+                    focusDistanceMax = Math.min(cameraMax, 1.0);   // 最大100cm
                     console.log(`フォーカス距離範囲: ${focusDistanceMin}m - ${focusDistanceMax}m`);
 
                     // スライダーの範囲を設定（cmに変換）
@@ -570,9 +577,9 @@
             }
         }
 
-        // ===== フレームを全画面描画 =====
+        // ===== フレームを等倍で中央描画 =====
         function drawFullFrame(frameIndex, vw, vh, w, h) {
-            // フレームの領域を計算
+            // フレームの領域を計算（ソース側）
             let sx, sy, sw, sh;
 
             if (currentMode === 'grid') {
@@ -597,8 +604,20 @@
                 sy = frameIndex * sh;
             }
 
-            // 指定領域を画面全体に拡大描画
-            ctx.drawImage(videoElement, sx, sy, sw, sh, 0, 0, w, h);
+            // 等倍で中央に描画（引き伸ばさない）
+            // 背景は既にdraw()でクリア済み（黒）
+            const drawX = (w - sw) / 2;
+            const drawY = (h - sh) / 2;
+            ctx.drawImage(videoElement, sx, sy, sw, sh, drawX, drawY, sw, sh);
+        }
+
+        // ===== アニメーション切り替え =====
+        function toggleAnimation() {
+            if (isPlaying) {
+                stopAnimation();
+            } else {
+                startAnimation();
+            }
         }
 
         // ===== アニメーション開始 =====
@@ -609,14 +628,15 @@
             currentFrame = 0;
             console.log('アニメーション開始');
 
-            // ボタン状態を更新
-            document.getElementById('playBtn').disabled = true;
-            document.getElementById('stopBtn').disabled = false;
+            // ボタン状態を更新（停止ボタンに変更）
+            const btn = document.getElementById('playStopBtn');
+            btn.textContent = '⏹';
+            btn.title = '停止';
 
-            // 200msごとにフレームを切り替え
+            // 250msごとにフレームを切り替え（1周1秒）
             animationInterval = setInterval(() => {
                 currentFrame = (currentFrame + 1) % 4;
-            }, 200);
+            }, 250);
         }
 
         // ===== アニメーション停止 =====
@@ -627,9 +647,10 @@
             currentFrame = 0;
             console.log('アニメーション停止');
 
-            // ボタン状態を更新
-            document.getElementById('playBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
+            // ボタン状態を更新（再生ボタンに変更）
+            const btn = document.getElementById('playStopBtn');
+            btn.textContent = '▶';
+            btn.title = '再生';
 
             // インターバルをクリア
             if (animationInterval) {
@@ -647,8 +668,32 @@
             }
         }
 
+        // ===== FFmpegの初期化 =====
+        async function initFFmpeg() {
+            if (ffmpegLoaded) return true;
+
+            try {
+                const { FFmpeg } = FFmpegWASM;
+                const { fetchFile } = FFmpegUtil;
+                ffmpeg = new FFmpeg();
+
+                // FFmpegのコアをロード
+                await ffmpeg.load({
+                    coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
+                    wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm'
+                });
+
+                ffmpegLoaded = true;
+                console.log('FFmpeg loaded successfully');
+                return true;
+            } catch (error) {
+                console.error('FFmpeg初期化エラー:', error);
+                return false;
+            }
+        }
+
         // ===== 録画開始 =====
-        function startRecording() {
+        async function startRecording() {
             // アニメーション再生中でない場合は開始
             if (!isPlaying) {
                 startAnimation();
@@ -660,6 +705,9 @@
                 return;
             }
 
+            // FFmpegを事前ロード（バックグラウンドで）
+            initFFmpeg();
+
             console.log('録画開始');
             isRecording = true;
             recordedChunks = [];
@@ -667,9 +715,9 @@
             // Canvasからストリームを取得
             const canvasStream = canvas.captureStream(30);  // 30fps
 
-            // MediaRecorderを作成
+            // MediaRecorderを作成（VP8を使用、MP4変換しやすい）
             mediaRecorder = new MediaRecorder(canvasStream, {
-                mimeType: 'video/webm;codecs=vp9'
+                mimeType: 'video/webm;codecs=vp8'
             });
 
             // データが利用可能になったときの処理
@@ -707,26 +755,92 @@
             const recordBtn = document.getElementById('recordBtn');
             recordBtn.classList.remove('recording');
             recordBtn.textContent = '⏺';
+            recordBtn.disabled = true;  // 変換中は無効化
         }
 
-        // ===== 録画を保存 =====
-        function saveRecording() {
+        // ===== 録画を保存（MP4に変換） =====
+        async function saveRecording() {
             if (recordedChunks.length === 0) return;
 
-            // Blobを作成
-            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const recordBtn = document.getElementById('recordBtn');
 
-            // ダウンロードリンクを作成
+            try {
+                // WebM Blobを作成
+                const webmBlob = new Blob(recordedChunks, { type: 'video/webm' });
+                console.log('WebM録画サイズ:', webmBlob.size, 'bytes');
+
+                // FFmpegがロードされていない場合はロード
+                if (!ffmpegLoaded) {
+                    console.log('FFmpegをロード中...');
+                    recordBtn.textContent = '変換準備中...';
+                    const loaded = await initFFmpeg();
+                    if (!loaded) {
+                        // FFmpegが使えない場合はWebMで保存
+                        console.log('FFmpeg使用不可、WebMで保存');
+                        downloadBlob(webmBlob, `fretanime_${Date.now()}.webm`);
+                        recordBtn.disabled = false;
+                        recordBtn.textContent = '⏺';
+                        return;
+                    }
+                }
+
+                // MP4に変換
+                console.log('MP4に変換中...');
+                recordBtn.textContent = '変換中...';
+                isConverting = true;
+
+                const { fetchFile } = FFmpegUtil;
+
+                // WebMファイルをFFmpegに書き込み
+                const webmData = await webmBlob.arrayBuffer();
+                await ffmpeg.writeFile('input.webm', new Uint8Array(webmData));
+
+                // WebM → MP4変換（高速設定）
+                await ffmpeg.exec([
+                    '-i', 'input.webm',
+                    '-c:v', 'libx264',
+                    '-preset', 'ultrafast',
+                    '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart',
+                    'output.mp4'
+                ]);
+
+                // 変換されたMP4を読み取り
+                const mp4Data = await ffmpeg.readFile('output.mp4');
+                const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+
+                // ダウンロード
+                downloadBlob(mp4Blob, `fretanime_${Date.now()}.mp4`);
+
+                // クリーンアップ
+                await ffmpeg.deleteFile('input.webm');
+                await ffmpeg.deleteFile('output.mp4');
+
+                console.log('MP4変換完了');
+
+            } catch (error) {
+                console.error('録画保存エラー:', error);
+                // エラー時はWebMで保存
+                const webmBlob = new Blob(recordedChunks, { type: 'video/webm' });
+                downloadBlob(webmBlob, `fretanime_${Date.now()}.webm`);
+            } finally {
+                isConverting = false;
+                recordBtn.disabled = false;
+                recordBtn.textContent = '⏺';
+            }
+        }
+
+        // ===== Blobをダウンロード =====
+        function downloadBlob(blob, filename) {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `fretanime_${Date.now()}.webm`;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-
-            console.log('録画を保存しました');
+            console.log('ファイル保存:', filename);
         }
 
         // ===== フォーカスモードの切り替え =====
