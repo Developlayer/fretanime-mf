@@ -278,3 +278,35 @@ MP4生成に使用している `mp4-muxer` の信頼性を調査：
 **結論:** 現時点では安全に使用可能。脆弱性が見つかるか新機能が必要になった場合にMediabunnyへ移行を検討。
 
 ---
+
+#### MP4録画ライブラリの変更（mp4-muxer → h264-mp4-encoder）
+
+**問題:** ChromebookでMP4がダウンロードできず、PNGにフォールバックしてしまう
+
+**原因:**
+- 従来の方式はWebCodecs API（VideoEncoder）+ mp4-muxerを使用
+- ChromebookではH.264のハードウェアエンコーダーが搭載されていないことが多い
+- VideoEncoderがH.264をサポートしていないため、フォールバックが発生
+
+**解決策:** h264-mp4-encoder に変更
+
+| 項目 | 変更前（mp4-muxer） | 変更後（h264-mp4-encoder） |
+|------|---------------------|----------------------------|
+| エンコード方式 | WebCodecs API（ハードウェア依存） | WASM（ソフトウェアエンコード） |
+| SharedArrayBuffer | 不要 | **不要** |
+| Chromebook対応 | × | **○** |
+| ライセンス | MIT | MIT + Public Domain + MPL 1.1 |
+
+**h264-mp4-encoderの構成:**
+- h264-mp4-encoder本体: MITライセンス
+- minih264（H.264エンコーダー）: パブリックドメイン
+- libmp4v2（MP4コンテナ）: MPL 1.1
+
+**変更内容:**
+1. CDNをmp4-muxerからh264-mp4-encoderに変更
+2. createMP4FromFrames関数を完全に書き換え
+3. CONFIG設定を調整（VIDEO_BITRATE, VIDEO_CODEC → VIDEO_QUALITY）
+
+**コミット:** （後で追記）
+
+---
