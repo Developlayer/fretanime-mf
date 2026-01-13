@@ -307,6 +307,6 @@ MP4生成に使用している `mp4-muxer` の信頼性を調査：
 2. createMP4FromFrames関数を完全に書き換え
 3. CONFIG設定を調整（VIDEO_BITRATE, VIDEO_CODEC → VIDEO_QUALITY）
 
-**コミット:** （後で追記）
+**コミット:** `a3ac155` - fix: ChromebookでMP4ダウンロードできない問題を修正
 
 ---
