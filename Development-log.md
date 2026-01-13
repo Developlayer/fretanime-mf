@@ -157,4 +157,28 @@ Chromebookでのテスト後、以下の改善を実施：
 
 **コミット:** `869d6ca` - feat: 録画機能改善とUI調整
 
+#### MP4録画の根本的修正
+
+**問題:** FFmpeg.wasmがChromebookで動作せず、WebMのまま保存されてしまう
+
+**解決策:** FFmpegを完全に廃止し、mp4-muxer + WebCodecs APIに変更
+
+**変更内容:**
+1. ライブラリ変更: FFmpeg.wasm → mp4-muxer
+2. 録画方式変更: MediaRecorderストリーミング → フレームキャプチャ方式
+3. エンコード: WebCodecs API（VideoEncoder）でH.264エンコード
+4. タイムスタンプ形式: `1736850645123` → `20260114_153045`（年月日_時分秒）
+
+**フレームキャプチャ方式の流れ:**
+1. 各フレーム（0〜3）を順番に表示
+2. Canvas.toDataURL()でPNG形式でキャプチャ
+3. 4フレーム取得後、VideoEncoderでH.264エンコード
+4. mp4-muxerでMP4コンテナに格納
+5. Blobとしてダウンロード
+
+**フォールバック:**
+- WebCodecs APIがサポートされていない環境では静止画（PNG）として保存
+
+**コミット:** `1ffcf8b` - feat: MP4録画を確実に動作するように改善
+
 ---
