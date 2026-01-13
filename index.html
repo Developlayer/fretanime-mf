@@ -689,27 +689,46 @@
             requestAnimationFrame(draw);
         }
 
-        // ===== プレビュー描画（グリッドライン付き） =====
-        function drawPreview(vw, vh, w, h) {
-            // カメラ映像のアスペクト比を維持しながら画面全体に表示
+        /**
+         * ビデオをキャンバスにカバー表示する際のスケール情報を計算する
+         * @param {number} vw - ビデオの幅
+         * @param {number} vh - ビデオの高さ
+         * @param {number} w - キャンバスの幅
+         * @param {number} h - キャンバスの高さ
+         * @returns {{scale: number, drawWidth: number, drawHeight: number, drawX: number, drawY: number}}
+         */
+        function getCoverScale(vw, vh, w, h) {
             const videoAspect = vw / vh;
             const canvasAspect = w / h;
 
-            let drawWidth, drawHeight, drawX, drawY;
-
             if (canvasAspect > videoAspect) {
-                // キャンバスの方が横長: 幅に合わせる（カバー表示）
-                drawWidth = w;
-                drawHeight = w / videoAspect;
-                drawX = 0;
-                drawY = (h - drawHeight) / 2;
+                // キャンバスの方が横長: 幅に合わせる
+                const drawWidth = w;
+                const drawHeight = w / videoAspect;
+                return {
+                    scale: w / vw,
+                    drawWidth,
+                    drawHeight,
+                    drawX: 0,
+                    drawY: (h - drawHeight) / 2
+                };
             } else {
-                // キャンバスの方が縦長: 高さに合わせる（カバー表示）
-                drawHeight = h;
-                drawWidth = h * videoAspect;
-                drawX = (w - drawWidth) / 2;
-                drawY = 0;
+                // キャンバスの方が縦長: 高さに合わせる
+                const drawWidth = h * videoAspect;
+                const drawHeight = h;
+                return {
+                    scale: h / vh,
+                    drawWidth,
+                    drawHeight,
+                    drawX: (w - drawWidth) / 2,
+                    drawY: 0
+                };
             }
+        }
+
+        // ===== プレビュー描画（グリッドライン付き） =====
+        function drawPreview(vw, vh, w, h) {
+            const { drawWidth, drawHeight, drawX, drawY } = getCoverScale(vw, vh, w, h);
 
             // カメラ映像を描画
             state.elements.ctx.drawImage(state.elements.video, drawX, drawY, drawWidth, drawHeight);
@@ -802,19 +821,7 @@
          */
         function drawFullFrame(frameIndex, vw, vh, w, h) {
             const { sx, sy, sw, sh } = getFrameRect(frameIndex, vw, vh);
-
-            // プレビュー時と同じスケーリング係数を計算
-            const videoAspect = vw / vh;
-            const canvasAspect = w / h;
-            let scale;
-
-            if (canvasAspect > videoAspect) {
-                // キャンバスの方が横長: 幅に合わせる
-                scale = w / vw;
-            } else {
-                // キャンバスの方が縦長: 高さに合わせる
-                scale = h / vh;
-            }
+            const { scale } = getCoverScale(vw, vh, w, h);
 
             // スケーリングされたフレームサイズ（プレビュー時のグリッドセルと同じ大きさ）
             const scaledWidth = sw * scale;
