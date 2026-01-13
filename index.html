@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fretanime-mf</title>
+    <style>
+        /* ===== リセット & 基本スタイル ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;  /* スクロール禁止 */
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        /* ===== カメラ映像（非表示） ===== */
+        #video {
+            display: none;  /* Canvasに描画するため非表示 */
+        }
+
+        /* ===== 描画Canvas（フルスクリーン） ===== */
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* ===== エラーメッセージ ===== */
+        #errorMessage {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 10px;
+            z-index: 200;
+            display: none;
+        }
+
+        /* ===== UIオーバーレイ（右上） ===== */
+        .ui-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            border-radius: 8px;
+            z-index: 100;
+        }
+
+        /* ===== ボタン共通スタイル ===== */
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            transition: background 0.2s, transform 0.1s;
+            min-width: 44px;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button.active {
+            background: #4a90d9;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        button:disabled:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* ===== 録画中のスタイル ===== */
+        button.recording {
+            background: #d94a4a;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* ===== フォーカスコントロール ===== */
+        .focus-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .focus-slider {
+            width: 100px;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        .focus-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .focus-slider:disabled {
+            opacity: 0.4;
+        }
+
+        .focus-slider:disabled::-webkit-slider-thumb {
+            cursor: not-allowed;
+        }
+
+        .focus-value {
+            min-width: 55px;
+            color: white;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        /* ===== 区切り線 ===== */
+        .divider {
+            width: 1px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* ===== グリッドモードボタン ===== */
+        .grid-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        /* ===== 再生/録画ボタン ===== */
+        .playback-buttons {
+            display: flex;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- カメラ映像（非表示、Canvasへの描画元） -->
+    <video id="video" autoplay playsinline muted></video>
+
+    <!-- 描画Canvas（フルスクリーン） -->
+    <canvas id="canvas"></canvas>
+
+    <!-- エラーメッセージ -->
+    <div id="errorMessage"></div>
+
+    <!-- UIオーバーレイ（右上） -->
+    <div class="ui-container">
+        <!-- フォーカスコントロール（新規追加） -->
+        <div class="focus-control">
+            <button id="focusModeBtn" disabled>AF</button>
+            <input type="range" id="focusSlider" class="focus-slider"
+                   min="0" max="200" value="100" step="1" disabled>
+            <span id="focusValue" class="focus-value">AUTO</span>
+        </div>
+
+        <!-- 区切り -->
+        <div class="divider"></div>
+
+        <!-- グリッドモードボタン -->
+        <div class="grid-buttons">
+            <button id="gridBtn" class="active" data-mode="grid" title="田んぼ分割">田</button>
+            <button id="columnBtn" data-mode="column" title="タテ短冊">タテ</button>
+            <button id="rowBtn" data-mode="row" title="ヨコ短冊">ヨコ</button>
+        </div>
+
+        <!-- 区切り -->
+        <div class="divider"></div>
+
+        <!-- 再生/録画ボタン -->
+        <div class="playback-buttons">
+            <button id="playBtn" title="再生">▶</button>
+            <button id="stopBtn" title="停止" disabled>⏹</button>
+            <button id="recordBtn" title="録画">⏺</button>
+        </div>
+    </div>
+
+    <script>
+        // ===== 状態管理 =====
+        let videoElement = null;          // video要素
+        let canvas = null;                 // canvas要素
+        let ctx = null;                    // canvas 2Dコンテキスト
+        let videoTrack = null;             // カメラのビデオトラック
+        let currentMode = 'grid';          // 現在のグリッドモード: 'grid', 'column', 'row'
+        let isPlaying = false;             // アニメーション再生中フラグ
+        let currentFrame = 0;              // 現在表示中のフレーム (0-3)
+        let animationInterval = null;     // アニメーションのインターバルID
+        let isRecording = false;           // 録画中フラグ
+        let mediaRecorder = null;          // MediaRecorderインスタンス
+        let recordedChunks = [];           // 録画データの配列
+        let focusMode = 'continuous';      // フォーカスモード: 'continuous' or 'manual'
+        let focusSupported = false;        // フォーカス制御サポートフラグ
+        let mfSupported = false;           // マニュアルフォーカスサポートフラグ
+        let focusDistanceMin = 0;          // フォーカス距離の最小値
+        let focusDistanceMax = 2;          // フォーカス距離の最大値
+
+        // ===== DOM要素の取得 =====
+        document.addEventListener('DOMContentLoaded', () => {
+            videoElement = document.getElementById('video');
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+
+            // Canvasサイズの初期設定
+            resizeCanvas();
+
+            // イベントリスナーの設定
+            setupEventListeners();
+
+            // カメラの初期化
+            initCamera();
+        });
+
+        // ===== Canvasサイズの設定 =====
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            console.log(`Canvas resized: ${canvas.width}x${canvas.height}`);
+        }
+
+        // ===== イベントリスナーの設定 =====
+        function setupEventListeners() {
+            // ウィンドウリサイズ
+            window.addEventListener('resize', resizeCanvas);
+
+            // グリッドモードボタン
+            document.getElementById('gridBtn').addEventListener('click', () => setGridMode('grid'));
+            document.getElementById('columnBtn').addEventListener('click', () => setGridMode('column'));
+            document.getElementById('rowBtn').addEventListener('click', () => setGridMode('row'));
+
+            // 再生/停止ボタン
+            document.getElementById('playBtn').addEventListener('click', startAnimation);
+            document.getElementById('stopBtn').addEventListener('click', stopAnimation);
+
+            // 録画ボタン
+            document.getElementById('recordBtn').addEventListener('click', toggleRecording);
+
+            // フォーカスモードボタン
+            document.getElementById('focusModeBtn').addEventListener('click', toggleFocusMode);
+
+            // フォーカススライダー
+            document.getElementById('focusSlider').addEventListener('input', onFocusSliderChange);
+        }
+
+        // ===== カメラの初期化 =====
+        async function initCamera() {
+            console.log('カメラを初期化中...');
+
+            try {
+                // カメラアクセスをリクエスト（アウトカメラを指定）
+                const constraints = {
+                    video: {
+                        facingMode: { exact: 'environment' },  // アウトカメラを指定
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch (e) {
+                    // exact指定が失敗した場合、preferを試す
+                    console.log('exact environment指定が失敗、preferで再試行...');
+                    const fallbackConstraints = {
+                        video: {
+                            facingMode: 'environment',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    };
+                    stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+                }
+
+                // ストリームをvideo要素に接続
+                videoElement.srcObject = stream;
+
+                // ビデオトラックを取得
+                videoTrack = stream.getVideoTracks()[0];
+                console.log('カメラトラック取得:', videoTrack.label);
+
+                // カメラの能力を確認
+                checkCameraCapabilities();
+
+                // video要素の再生開始を待つ
+                videoElement.onloadedmetadata = () => {
+                    console.log(`ビデオサイズ: ${videoElement.videoWidth}x${videoElement.videoHeight}`);
+                    // 描画ループを開始
+                    requestAnimationFrame(draw);
+                };
+
+            } catch (error) {
+                console.error('カメラの初期化に失敗:', error);
+                showError('カメラへのアクセスができませんでした。\nカメラへのアクセスを許可してください。');
+            }
+        }
+
+        // ===== カメラの能力を確認 =====
+        function checkCameraCapabilities() {
+            if (!videoTrack || typeof videoTrack.getCapabilities !== 'function') {
+                console.log('getCapabilities未サポート');
+                return;
+            }
+
+            const capabilities = videoTrack.getCapabilities();
+            console.log('カメラの能力:', capabilities);
+
+            // フォーカス制御のサポートを確認
+            if (capabilities.focusMode) {
+                focusSupported = true;
+                const supportedModes = capabilities.focusMode;
+                console.log('サポートされているフォーカスモード:', supportedModes);
+
+                // マニュアルフォーカスのサポートを確認
+                mfSupported = supportedModes.includes('manual');
+
+                if (mfSupported && capabilities.focusDistance) {
+                    focusDistanceMin = capabilities.focusDistance.min || 0;
+                    focusDistanceMax = capabilities.focusDistance.max || 2;
+                    console.log(`フォーカス距離範囲: ${focusDistanceMin}m - ${focusDistanceMax}m`);
+
+                    // スライダーの範囲を設定（cmに変換）
+                    const slider = document.getElementById('focusSlider');
+                    slider.min = Math.round(focusDistanceMin * 100);
+                    slider.max = Math.round(focusDistanceMax * 100);
+                    slider.value = Math.round((focusDistanceMin + focusDistanceMax) / 2 * 100);
+                }
+
+                // フォーカスUIを有効化
+                document.getElementById('focusModeBtn').disabled = false;
+            } else {
+                console.log('フォーカス制御は未サポート');
+            }
+        }
+
+        // ===== エラーメッセージを表示 =====
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // ===== グリッドモードの設定 =====
+        function setGridMode(mode) {
+            currentMode = mode;
+            console.log('グリッドモード変更:', mode);
+
+            // ボタンのアクティブ状態を更新
+            document.querySelectorAll('.grid-buttons button').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === mode);
+            });
+        }
+
+        // ===== 描画ループ =====
+        function draw() {
+            // カメラ映像がまだ準備できていない場合
+            if (videoElement.readyState < videoElement.HAVE_CURRENT_DATA) {
+                requestAnimationFrame(draw);
+                return;
+            }
+
+            const w = canvas.width;
+            const h = canvas.height;
+            const vw = videoElement.videoWidth;
+            const vh = videoElement.videoHeight;
+
+            // 背景をクリア
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, w, h);
+
+            if (isPlaying) {
+                // アニメーション再生中: 現在のフレームのみを全画面表示
+                drawFullFrame(currentFrame, vw, vh, w, h);
+            } else {
+                // プレビューモード: カメラ映像全体を表示してグリッドラインを描画
+                drawPreview(vw, vh, w, h);
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        // ===== プレビュー描画（グリッドライン付き） =====
+        function drawPreview(vw, vh, w, h) {
+            // カメラ映像のアスペクト比を維持しながら画面全体に表示
+            const videoAspect = vw / vh;
+            const canvasAspect = w / h;
+
+            let drawWidth, drawHeight, drawX, drawY;
+
+            if (canvasAspect > videoAspect) {
+                // キャンバスの方が横長: 幅に合わせる（カバー表示）
+                drawWidth = w;
+                drawHeight = w / videoAspect;
+                drawX = 0;
+                drawY = (h - drawHeight) / 2;
+            } else {
+                // キャンバスの方が縦長: 高さに合わせる（カバー表示）
+                drawHeight = h;
+                drawWidth = h * videoAspect;
+                drawX = (w - drawWidth) / 2;
+                drawY = 0;
+            }
+
+            // カメラ映像を描画
+            ctx.drawImage(videoElement, drawX, drawY, drawWidth, drawHeight);
+
+            // グリッドラインを描画
+            drawGridLines();
+        }
+
+        // ===== グリッドラインを描画 =====
+        function drawGridLines() {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+
+            if (currentMode === 'grid') {
+                // 田んぼモード: 縦線と横線
+                ctx.beginPath();
+                ctx.moveTo(w / 2, 0);
+                ctx.lineTo(w / 2, h);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(0, h / 2);
+                ctx.lineTo(w, h / 2);
+                ctx.stroke();
+            } else if (currentMode === 'column') {
+                // タテ短冊モード: 縦線3本
+                for (let i = 1; i < 4; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(w / 4 * i, 0);
+                    ctx.lineTo(w / 4 * i, h);
+                    ctx.stroke();
+                }
+            } else if (currentMode === 'row') {
+                // ヨコ短冊モード: 横線3本
+                for (let i = 1; i < 4; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, h / 4 * i);
+                    ctx.lineTo(w, h / 4 * i);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // ===== フレームを全画面描画 =====
+        function drawFullFrame(frameIndex, vw, vh, w, h) {
+            // フレームの領域を計算
+            let sx, sy, sw, sh;
+
+            if (currentMode === 'grid') {
+                // 田んぼモード: 2x2
+                const col = frameIndex % 2;
+                const row = Math.floor(frameIndex / 2);
+                sw = vw / 2;
+                sh = vh / 2;
+                sx = col * sw;
+                sy = row * sh;
+            } else if (currentMode === 'column') {
+                // タテ短冊モード: 縦4分割
+                sw = vw / 4;
+                sh = vh;
+                sx = frameIndex * sw;
+                sy = 0;
+            } else if (currentMode === 'row') {
+                // ヨコ短冊モード: 横4分割
+                sw = vw;
+                sh = vh / 4;
+                sx = 0;
+                sy = frameIndex * sh;
+            }
+
+            // 指定領域を画面全体に拡大描画
+            ctx.drawImage(videoElement, sx, sy, sw, sh, 0, 0, w, h);
+        }
+
+        // ===== アニメーション開始 =====
+        function startAnimation() {
+            if (isPlaying) return;
+
+            isPlaying = true;
+            currentFrame = 0;
+            console.log('アニメーション開始');
+
+            // ボタン状態を更新
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+
+            // 200msごとにフレームを切り替え
+            animationInterval = setInterval(() => {
+                currentFrame = (currentFrame + 1) % 4;
+            }, 200);
+        }
+
+        // ===== アニメーション停止 =====
+        function stopAnimation() {
+            if (!isPlaying) return;
+
+            isPlaying = false;
+            currentFrame = 0;
+            console.log('アニメーション停止');
+
+            // ボタン状態を更新
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+
+            // インターバルをクリア
+            if (animationInterval) {
+                clearInterval(animationInterval);
+                animationInterval = null;
+            }
+        }
+
+        // ===== 録画の切り替え =====
+        function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        // ===== 録画開始 =====
+        function startRecording() {
+            // アニメーション再生中でない場合は開始
+            if (!isPlaying) {
+                startAnimation();
+            }
+
+            // MediaRecorderのサポートを確認
+            if (!MediaRecorder.isTypeSupported('video/webm')) {
+                showError('お使いのブラウザは録画機能をサポートしていません。');
+                return;
+            }
+
+            console.log('録画開始');
+            isRecording = true;
+            recordedChunks = [];
+
+            // Canvasからストリームを取得
+            const canvasStream = canvas.captureStream(30);  // 30fps
+
+            // MediaRecorderを作成
+            mediaRecorder = new MediaRecorder(canvasStream, {
+                mimeType: 'video/webm;codecs=vp9'
+            });
+
+            // データが利用可能になったときの処理
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            // 録画停止時の処理
+            mediaRecorder.onstop = () => {
+                saveRecording();
+            };
+
+            // 録画開始
+            mediaRecorder.start();
+
+            // ボタンの状態を更新
+            const recordBtn = document.getElementById('recordBtn');
+            recordBtn.classList.add('recording');
+            recordBtn.textContent = '⏹';
+        }
+
+        // ===== 録画停止 =====
+        function stopRecording() {
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+
+            console.log('録画停止');
+            isRecording = false;
+
+            // MediaRecorderを停止
+            mediaRecorder.stop();
+
+            // ボタンの状態を更新
+            const recordBtn = document.getElementById('recordBtn');
+            recordBtn.classList.remove('recording');
+            recordBtn.textContent = '⏺';
+        }
+
+        // ===== 録画を保存 =====
+        function saveRecording() {
+            if (recordedChunks.length === 0) return;
+
+            // Blobを作成
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+
+            // ダウンロードリンクを作成
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `fretanime_${Date.now()}.webm`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log('録画を保存しました');
+        }
+
+        // ===== フォーカスモードの切り替え =====
+        async function toggleFocusMode() {
+            if (!focusSupported) return;
+
+            const btn = document.getElementById('focusModeBtn');
+            const slider = document.getElementById('focusSlider');
+            const valueDisplay = document.getElementById('focusValue');
+
+            if (focusMode === 'continuous') {
+                // MFモードに切り替え
+                if (!mfSupported) {
+                    console.log('マニュアルフォーカスは未サポート');
+                    return;
+                }
+
+                focusMode = 'manual';
+                btn.textContent = 'MF';
+                btn.classList.add('active');
+                slider.disabled = false;
+
+                // 現在のスライダー値でフォーカスを設定
+                const distance = slider.value / 100;  // cmをmに変換
+                await setFocusDistance(distance);
+                valueDisplay.textContent = `${slider.value}cm`;
+
+                console.log('マニュアルフォーカスモードに切り替え');
+            } else {
+                // AFモードに切り替え
+                focusMode = 'continuous';
+                btn.textContent = 'AF';
+                btn.classList.remove('active');
+                slider.disabled = true;
+                valueDisplay.textContent = 'AUTO';
+
+                await setAutoFocus();
+                console.log('オートフォーカスモードに切り替え');
+            }
+        }
+
+        // ===== フォーカススライダーの変更 =====
+        async function onFocusSliderChange(event) {
+            if (focusMode !== 'manual') return;
+
+            const value = event.target.value;
+            const distance = value / 100;  // cmをmに変換
+
+            document.getElementById('focusValue').textContent = `${value}cm`;
+            await setFocusDistance(distance);
+        }
+
+        // ===== オートフォーカスを設定 =====
+        async function setAutoFocus() {
+            if (!videoTrack) return;
+
+            try {
+                await videoTrack.applyConstraints({
+                    advanced: [{ focusMode: 'continuous' }]
+                });
+                console.log('オートフォーカスを設定しました');
+            } catch (error) {
+                console.error('オートフォーカスの設定に失敗:', error);
+            }
+        }
+
+        // ===== フォーカス距離を設定 =====
+        async function setFocusDistance(distance) {
+            if (!videoTrack) return;
+
+            try {
+                await videoTrack.applyConstraints({
+                    advanced: [{
+                        focusMode: 'manual',
+                        focusDistance: distance
+                    }]
+                });
+                console.log(`フォーカス距離を設定: ${distance}m`);
+            } catch (error) {
+                console.error('フォーカス距離の設定に失敗:', error);
+            }
+        }
+    </script>
+</body>
+</html>
