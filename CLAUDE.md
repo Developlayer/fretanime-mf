@@ -19,7 +19,7 @@
 ### フォーカス制御
 - AF: `focusMode: 'continuous'`
 - MF: `focusMode: 'manual'` + `focusDistance: value`
-- focusDistance範囲: 0.0〜2.0（メートル単位）
+- focusDistance範囲: 0.02〜1.0（メートル単位、2cm〜100cm）
 
 ### 分割モード
 1. **田んぼ（grid）**: 2x2の4分割
@@ -38,6 +38,35 @@
 - 録画方式: 1ループ自動撮影（ボタン押下で4フレーム撮影）
 - 実装: WebCodecs API + mp4-muxer
 
+### mp4-muxer について
+- バージョン: 5.1.3（CDN経由で読み込み）
+- ライセンス: MIT
+- セキュリティ: SRI (Subresource Integrity) 設定済み
+- 状態: 非推奨（deprecated）だが、既知の脆弱性なし
+- 後継: Mediabunny（必要になった場合に移行検討）
+
+## コード構造
+
+### 設定定数（CONFIG）
+```javascript
+CONFIG.DEBUG = false;  // true でデバッグログ有効化
+CONFIG.FRAME_INTERVAL_MS = 250;  // アニメーション間隔
+CONFIG.TOTAL_FRAMES = 4;  // フレーム数
+```
+
+### 状態管理（state）
+```javascript
+state.elements    // DOM要素のキャッシュ
+state.camera      // カメラ関連の状態
+state.animation   // アニメーション関連の状態
+state.recording   // 録画関連の状態
+state.display     // 表示設定
+```
+
+### デバッグモード
+`CONFIG.DEBUG = true` に設定すると、コンソールに詳細ログが出力される。
+本番環境では `false` に設定。
+
 ## ファイル構成
 ```
 fretanime-mf/
@@ -53,3 +82,12 @@ fretanime-mf/
 - エラーハンドリング必須
 - UIは右上にオーバーレイ表示
 - 画面全体をCanvasで覆う（フルスクリーン前提）
+
+## 重要：変更してはいけない実装
+
+以下はChromebook対応のために必須の実装。変更すると動作しなくなる可能性あり：
+
+1. **video要素のCSS**: `display: none` ではなく画面外配置（`position: fixed; top: -9999px`）
+2. **3段階カメラフォールバック**: exact → prefer → 制約なし
+3. **mp4-muxer + WebCodecs API**: FFmpegは使用しない（SharedArrayBuffer問題）
+4. **ユーザー操作リトライ**: video.play()失敗時のclick/touchstartリスナー

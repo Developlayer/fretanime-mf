@@ -34,9 +34,8 @@
 | ボタン | 機能 |
 |--------|------|
 | グリッドボタン | 分割モード切替（田んぼ/タテ/ヨコ） |
-| 再生ボタン | アニメーション開始（枠内を順番に表示） |
-| 停止ボタン | アニメーション停止 |
-| 録画ボタン | 動画ファイル書き出し |
+| 再生/停止ボタン | アニメーション開始/停止（トグル式） |
+| 録画ボタン | 1ループ（4フレーム）を自動撮影・保存 |
 
 ---
 
@@ -111,124 +110,120 @@ function drawFrame() {
 ### 4.3 グリッド分割アルゴリズム
 
 ```javascript
-// フレームバッファ（各区画の映像を保存）
-const frameBuffers = [null, null, null, null];
-let captureIndex = 0;
+// リアルタイム映像から直接分割表示（バッファリングなし）
+// アニメーション中も常に最新のカメラ映像を使用
 
-// 区画のキャプチャ
-function captureFrame(gridMode, index) {
-  const tempCanvas = document.createElement('canvas');
-  const tempCtx = tempCanvas.getContext('2d');
-  
-  let sx, sy, sw, sh; // ソース座標
-  
+function drawFrame(gridMode, index, video, ctx, canvasWidth, canvasHeight) {
+  let sx, sy, sw, sh; // ソース座標（ビデオ側）
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+
   switch(gridMode) {
     case 'grid': // 2x2
-      sw = video.videoWidth / 2;
-      sh = video.videoHeight / 2;
+      sw = vw / 2;
+      sh = vh / 2;
       sx = (index % 2) * sw;
       sy = Math.floor(index / 2) * sh;
       break;
     case 'column': // 縦4分割
-      sw = video.videoWidth / 4;
-      sh = video.videoHeight;
+      sw = vw / 4;
+      sh = vh;
       sx = index * sw;
       sy = 0;
       break;
     case 'row': // 横4分割
-      sw = video.videoWidth;
-      sh = video.videoHeight / 4;
+      sw = vw;
+      sh = vh / 4;
       sx = 0;
       sy = index * sh;
       break;
   }
-  
-  tempCanvas.width = sw;
-  tempCanvas.height = sh;
-  tempCtx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-  
-  return tempCanvas;
+
+  // 等倍で中央に描画（引き伸ばさない）
+  const drawX = (canvasWidth - sw) / 2;
+  const drawY = (canvasHeight - sh) / 2;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  ctx.drawImage(video, sx, sy, sw, sh, drawX, drawY, sw, sh);
 }
 ```
+
+> **注**: 本家はフレームバッファを使用せず、リアルタイム映像を直接分割表示する方式
 
 ### 4.4 アニメーション再生
 
 ```javascript
 let isPlaying = false;
 let currentFrame = 0;
-let lastFrameTime = 0;
-const FRAME_DURATION = 200; // ミリ秒（調整可能）
+let animationInterval = null;
+const FRAME_DURATION = ???; // ミリ秒（本家の正確な値は未確認）
 
-function animate(timestamp) {
-  if (!isPlaying) return;
-  
-  if (timestamp - lastFrameTime > FRAME_DURATION) {
-    // 次のフレームを表示
-    displayFrame(frameBuffers[currentFrame]);
+function startAnimation() {
+  if (isPlaying) return;
+  isPlaying = true;
+  currentFrame = 0;
+
+  // 一定間隔でフレームを切り替え
+  animationInterval = setInterval(() => {
     currentFrame = (currentFrame + 1) % 4;
-    lastFrameTime = timestamp;
-  }
-  
-  requestAnimationFrame(animate);
+  }, FRAME_DURATION);
 }
 
-function displayFrame(frameCanvas) {
-  // 全画面表示
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(frameCanvas, 0, 0, canvas.width, canvas.height);
+function stopAnimation() {
+  isPlaying = false;
+  if (animationInterval) {
+    clearInterval(animationInterval);
+    animationInterval = null;
+  }
 }
+
+// 描画ループ内でcurrentFrameに基づいてリアルタイム映像を分割表示
+// （フレームは等倍で中央表示、周囲は黒）
 ```
+
+> **注**: 本家のFRAME_DURATIONの正確な値は確認できていない
 
 ### 4.5 動画録画
 
 ```javascript
-let mediaRecorder;
-let recordedChunks = [];
+// 1ループ自動撮影方式
+// 録画ボタン押下で4フレーム（1ループ）を自動撮影・保存
 
-function startRecording() {
-  const stream = canvas.captureStream(30); // 30 FPS
-  
-  const options = {
-    mimeType: 'video/webm;codecs=vp9'
-  };
-  
-  // ブラウザサポート確認
-  if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-    options.mimeType = 'video/webm';
-  }
-  
-  mediaRecorder = new MediaRecorder(stream, options);
-  
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) {
-      recordedChunks.push(e.data);
+async function recordOneLoop() {
+  const frameInterval = FRAME_DURATION; // フレーム間隔
+  const totalFrames = 4;
+  const capturedFrames = [];
+
+  // 4フレームを順番にキャプチャ
+  for (let i = 0; i < totalFrames; i++) {
+    currentFrame = i;
+    await new Promise(resolve => setTimeout(resolve, 50)); // 描画待機
+
+    // Canvasからフレームをキャプチャ
+    const frameData = canvas.toDataURL('image/png');
+    capturedFrames.push(frameData);
+
+    if (i < totalFrames - 1) {
+      await new Promise(resolve => setTimeout(resolve, frameInterval));
     }
-  };
-  
-  mediaRecorder.onstop = () => {
-    downloadVideo();
-  };
-  
-  mediaRecorder.start();
+  }
+
+  // 動画として保存（形式は実装依存）
+  await saveAsVideo(capturedFrames);
 }
 
-function stopRecording() {
-  mediaRecorder.stop();
-}
-
-function downloadVideo() {
-  const blob = new Blob(recordedChunks, { type: 'video/webm' });
+function downloadVideo(blob, filename) {
   const url = URL.createObjectURL(blob);
-  
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'fretanime_' + Date.now() + '.webm';
+  a.download = filename;
   a.click();
-  
   URL.revokeObjectURL(url);
-  recordedChunks = [];
 }
 ```
+
+> **注**: 録画は開始/停止のトグル方式ではなく、ボタン1回押下で1ループを自動撮影する方式
 
 ---
 
@@ -277,18 +272,17 @@ const state = {
   // カメラ状態
   cameraReady: false,
   cameraStream: null,
-  
+
   // 表示モード
   gridMode: 'grid',  // 'grid' | 'column' | 'row'
-  
+
   // アニメーション状態
   isPlaying: false,
-  currentFrameIndex: 0,
-  frameBuffers: [null, null, null, null],
-  
+  currentFrameIndex: 0,  // 0-3
+  // 注: フレームバッファは使用しない（リアルタイム表示）
+
   // 録画状態
-  isRecording: false,
-  recordedChunks: []
+  isRecording: false  // 1ループ撮影中フラグ
 };
 ```
 
@@ -368,9 +362,8 @@ function getRecordingMimeType() {
 - [ ] カメラアクセス許可の取得
 - [ ] リアルタイム映像表示
 - [ ] 3種類のグリッド分割
-- [ ] フレームバッファリング
-- [ ] アニメーション再生/停止
-- [ ] 動画録画・ダウンロード
+- [ ] アニメーション再生/停止（リアルタイム分割表示）
+- [ ] 動画録画・ダウンロード（1ループ自動撮影）
 
 ### 追加検討機能
 - [ ] フレームレート調整
@@ -400,15 +393,29 @@ function getRecordingMimeType() {
 
 以下の情報は公開情報からは確認できませんでした：
 
-1. **具体的なフレームレート設定**
+1. **具体的なフレーム間隔（FRAME_DURATION）の値**
 2. **UIライブラリの詳細**
 3. **状態管理ライブラリ（Redux等）の使用有無**
 4. **PWA対応の有無**
 5. **エラーハンドリングの詳細**
 6. **アナリティクス実装**
+7. **動画出力形式の詳細**
 
 これらは実際にブラウザのDevToolsで調査するか、開発者に問い合わせる必要があります。
 
 ---
 
-*このドキュメントは https://www.fretanime.jp/ および https://www.fretanime.jp/app/ の公開情報に基づいて作成されました。*
+## 12. 2026年1月14日更新：動作確認結果
+
+本家アプリの実際の動作を確認した結果、以下が判明：
+
+| 項目 | 当初の推定 | 実際の動作 |
+|------|-----------|-----------|
+| フレーム表示方式 | バッファリング後に再生 | リアルタイム映像を直接分割表示 |
+| アニメーション表示 | 全画面に引き伸ばし | 等倍で中央表示、周囲は黒 |
+| 録画方式 | 開始/停止トグル | 1ループ自動撮影 |
+| 再生/停止ボタン | 別々のボタン | 1つのトグルボタン |
+
+---
+
+*このドキュメントは https://www.fretanime.jp/ および https://www.fretanime.jp/app/ の公開情報と実際の動作確認に基づいて作成されました。*

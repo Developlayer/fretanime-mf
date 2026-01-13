@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>fretanime-mf</title>
     <!-- mp4-muxer for MP4 generation (no FFmpeg dependency) -->
-    <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+    <!-- 注意: このライブラリは非推奨（deprecated）だが、既知の脆弱性はなし -->
+    <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"
+            integrity="sha384-ut5hA6QX8px1vwvHCiy1MqfODbif8Iy0Gr+X61/AoNxP3VXx2wF99Pu9PeTEkG5E"
+            crossorigin="anonymous"></script>
     <style>
         /* ===== リセット & 基本スタイル ===== */
         * {
@@ -221,31 +224,97 @@
     </div>
 
     <script>
+        // ===== 設定定数 =====
+        const CONFIG = {
+            // アニメーション設定
+            FRAME_INTERVAL_MS: 250,      // 1フレームの表示時間（ミリ秒）
+            TOTAL_FRAMES: 4,             // フレーム数
+
+            // カメラ設定
+            VIDEO_WIDTH: 1280,
+            VIDEO_HEIGHT: 720,
+
+            // フォーカス設定（メートル単位）
+            FOCUS_MIN_M: 0.02,           // 2cm
+            FOCUS_MAX_M: 1.0,            // 100cm
+
+            // 録画設定
+            VIDEO_FPS: 4,
+            VIDEO_BITRATE: 2_000_000,
+            VIDEO_CODEC: 'avc1.42001f',  // H.264 Baseline Profile
+
+            // デバッグモード
+            DEBUG: false
+        };
+
+        // ===== デバッグログ出力 =====
+        function debugLog(...args) {
+            if (CONFIG.DEBUG) {
+                console.log(...args);
+            }
+        }
+
         // ===== 状態管理 =====
-        let videoElement = null;          // video要素
-        let canvas = null;                 // canvas要素
-        let ctx = null;                    // canvas 2Dコンテキスト
-        let videoTrack = null;             // カメラのビデオトラック
-        let currentMode = 'grid';          // 現在のグリッドモード: 'grid', 'column', 'row'
-        let isPlaying = false;             // アニメーション再生中フラグ
-        let currentFrame = 0;              // 現在表示中のフレーム (0-3)
-        let animationInterval = null;     // アニメーションのインターバルID
-        let isRecording = false;           // 録画中フラグ
-        let mediaRecorder = null;          // MediaRecorderインスタンス
-        let recordedChunks = [];           // 録画データの配列
-        let focusMode = 'continuous';      // フォーカスモード: 'continuous' or 'manual'
-        let focusSupported = false;        // フォーカス制御サポートフラグ
-        let mfSupported = false;           // マニュアルフォーカスサポートフラグ
-        let focusDistanceMin = 0.02;       // フォーカス距離の最小値（2cm）
-        let focusDistanceMax = 1.0;        // フォーカス距離の最大値（100cm）
-        let isConverting = false;          // 変換中フラグ
-        let capturedFrames = [];           // キャプチャしたフレーム画像
+        const state = {
+            // DOM要素
+            elements: {
+                video: null,               // video要素
+                canvas: null,              // canvas要素
+                ctx: null,                 // canvas 2Dコンテキスト
+                // UIボタン
+                playStopBtn: null,         // 再生/停止ボタン
+                recordBtn: null,           // 録画ボタン
+                focusModeBtn: null,        // AF/MFボタン
+                focusSlider: null,         // フォーカススライダー
+                focusValue: null,          // フォーカス値表示
+                errorMessage: null         // エラーメッセージ
+            },
+
+            // カメラ関連
+            camera: {
+                track: null,               // カメラのビデオトラック
+                focusSupported: false,     // フォーカス制御サポートフラグ
+                mfSupported: false,        // マニュアルフォーカスサポートフラグ
+                focusMode: 'continuous',   // フォーカスモード: 'continuous' or 'manual'
+                focusDistanceMin: CONFIG.FOCUS_MIN_M,  // フォーカス距離の最小値
+                focusDistanceMax: CONFIG.FOCUS_MAX_M   // フォーカス距離の最大値
+            },
+
+            // アニメーション関連
+            animation: {
+                isPlaying: false,          // アニメーション再生中フラグ
+                currentFrame: 0,           // 現在表示中のフレーム (0-3)
+                intervalId: null,          // アニメーションのインターバルID
+                wasPausedByVisibility: false  // ページ非表示で一時停止されたか
+            },
+
+            // 録画関連
+            recording: {
+                isRecording: false,        // 録画中フラグ
+                isConverting: false,       // 変換中フラグ
+                capturedFrames: []         // キャプチャしたフレーム画像
+            },
+
+            // 表示設定
+            display: {
+                gridMode: 'grid'           // グリッドモード: 'grid', 'column', 'row'
+            }
+        };
 
         // ===== DOM要素の取得 =====
         document.addEventListener('DOMContentLoaded', () => {
-            videoElement = document.getElementById('video');
-            canvas = document.getElementById('canvas');
-            ctx = canvas.getContext('2d');
+            // 描画関連
+            state.elements.video = document.getElementById('video');
+            state.elements.canvas = document.getElementById('canvas');
+            state.elements.ctx = state.elements.canvas.getContext('2d');
+
+            // UIボタン
+            state.elements.playStopBtn = document.getElementById('playStopBtn');
+            state.elements.recordBtn = document.getElementById('recordBtn');
+            state.elements.focusModeBtn = document.getElementById('focusModeBtn');
+            state.elements.focusSlider = document.getElementById('focusSlider');
+            state.elements.focusValue = document.getElementById('focusValue');
+            state.elements.errorMessage = document.getElementById('errorMessage');
 
             // Canvasサイズの初期設定
             resizeCanvas();
@@ -259,9 +328,9 @@
 
         // ===== Canvasサイズの設定 =====
         function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            console.log(`Canvas resized: ${canvas.width}x${canvas.height}`);
+            state.elements.canvas.width = window.innerWidth;
+            state.elements.canvas.height = window.innerHeight;
+            debugLog(`Canvas resized: ${state.elements.canvas.width}x${state.elements.canvas.height}`);
         }
 
         // ===== イベントリスナーの設定 =====
@@ -269,138 +338,79 @@
             // ウィンドウリサイズ
             window.addEventListener('resize', resizeCanvas);
 
-            // グリッドモードボタン
+            // ページ可視性変更（タブ切り替え時の省電力対応）
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+
+            // グリッドモードボタン（頻繁にアクセスしないのでキャッシュ不要）
             document.getElementById('gridBtn').addEventListener('click', () => setGridMode('grid'));
             document.getElementById('columnBtn').addEventListener('click', () => setGridMode('column'));
             document.getElementById('rowBtn').addEventListener('click', () => setGridMode('row'));
 
             // 再生/停止ボタン（トグル）
-            document.getElementById('playStopBtn').addEventListener('click', toggleAnimation);
+            state.elements.playStopBtn.addEventListener('click', toggleAnimation);
 
             // 録画ボタン（1ループ自動撮影）
-            document.getElementById('recordBtn').addEventListener('click', recordOneLoop);
+            state.elements.recordBtn.addEventListener('click', recordOneLoop);
 
             // フォーカスモードボタン
-            document.getElementById('focusModeBtn').addEventListener('click', toggleFocusMode);
+            state.elements.focusModeBtn.addEventListener('click', toggleFocusMode);
 
             // フォーカススライダー
-            document.getElementById('focusSlider').addEventListener('input', onFocusSliderChange);
+            state.elements.focusSlider.addEventListener('input', onFocusSliderChange);
+        }
+
+        // ===== ページ可視性変更ハンドラー =====
+        function handleVisibilityChange() {
+            if (document.hidden) {
+                // ページが非表示になった時
+                debugLog('ページ非表示：省電力モード');
+
+                // 録画中は中断しない
+                if (state.recording.isRecording) {
+                    debugLog('録画中のため一時停止をスキップ');
+                    return;
+                }
+
+                // アニメーション再生中なら一時停止
+                if (state.animation.isPlaying) {
+                    state.animation.wasPausedByVisibility = true;
+                    stopAnimation();
+                    debugLog('アニメーションを一時停止');
+                }
+            } else {
+                // ページが表示された時
+                debugLog('ページ表示：復帰');
+
+                // 可視性変更で一時停止されていた場合は再開
+                if (state.animation.wasPausedByVisibility) {
+                    state.animation.wasPausedByVisibility = false;
+                    startAnimation();
+                    debugLog('アニメーションを再開');
+                }
+            }
         }
 
         // ===== カメラの初期化 =====
         async function initCamera() {
-            console.log('カメラを初期化中...');
+            debugLog('カメラを初期化中...');
 
             // 描画ループをすぐに開始（ビデオ準備前でも）
-            requestAnimationFrame(draw);
-            console.log('描画ループを開始');
+            startDrawLoop();
 
             try {
-                // カメラアクセスをリクエスト（アウトカメラを指定）
-                const constraints = {
-                    video: {
-                        facingMode: { exact: 'environment' },  // アウトカメラを指定
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: false
-                };
-
-                let stream;
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    console.log('アウトカメラ(exact)で取得成功');
-                } catch (e) {
-                    // exact指定が失敗した場合、preferを試す
-                    console.log('exact environment指定が失敗、preferで再試行...', e.message);
-                    const fallbackConstraints = {
-                        video: {
-                            facingMode: 'environment',
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        },
-                        audio: false
-                    };
-                    try {
-                        stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-                        console.log('アウトカメラ(prefer)で取得成功');
-                    } catch (e2) {
-                        // それでも失敗した場合、制約なしで試す
-                        console.log('environment指定が失敗、制約なしで再試行...', e2.message);
-                        stream = await navigator.mediaDevices.getUserMedia({
-                            video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-                            audio: false
-                        });
-                        console.log('制約なしで取得成功');
-                    }
-                }
+                // カメラストリームを取得
+                const stream = await acquireCameraStream();
 
                 // ビデオトラックを取得
-                videoTrack = stream.getVideoTracks()[0];
-                console.log('カメラトラック取得:', videoTrack.label);
-                console.log('トラック設定:', JSON.stringify(videoTrack.getSettings()));
+                state.camera.track = stream.getVideoTracks()[0];
+                debugLog('カメラトラック取得:', state.camera.track.label);
+                debugLog('トラック設定:', JSON.stringify(state.camera.track.getSettings()));
 
                 // カメラの能力を確認
                 checkCameraCapabilities();
 
-                // video要素の属性を確認・設定
-                videoElement.setAttribute('autoplay', '');
-                videoElement.setAttribute('playsinline', '');
-                videoElement.setAttribute('muted', '');
-                videoElement.muted = true;  // プログラムでも設定
-
-                // ストリームをvideo要素に接続（属性設定後に行う）
-                videoElement.srcObject = stream;
-                console.log('ストリームをvideo要素に接続');
-
-                // loadedmetadataイベントを待ってからplay()を呼び出す
-                const playVideo = async () => {
-                    try {
-                        const playPromise = videoElement.play();
-                        if (playPromise !== undefined) {
-                            await playPromise;
-                            console.log('video.play() 成功');
-                        }
-                    } catch (playError) {
-                        console.error('video.play() 失敗:', playError);
-                        // play()が失敗した場合、ユーザーインタラクション後に再試行
-                        const retryPlay = async () => {
-                            try {
-                                await videoElement.play();
-                                console.log('ユーザークリック後のplay()成功');
-                            } catch (e) {
-                                console.error('クリック後のplay()も失敗:', e);
-                            }
-                        };
-                        document.body.addEventListener('click', retryPlay, { once: true });
-                        document.body.addEventListener('touchstart', retryPlay, { once: true });
-                    }
-                };
-
-                // loadedmetadataイベントで再生開始
-                if (videoElement.readyState >= 1) {
-                    // すでにメタデータ読み込み済み
-                    console.log('メタデータ読み込み済み、play()を呼び出し');
-                    await playVideo();
-                } else {
-                    videoElement.addEventListener('loadedmetadata', async () => {
-                        console.log('loadedmetadata イベント発火');
-                        await playVideo();
-                    }, { once: true });
-                }
-
-                // video要素の状態をポーリングで確認（デバッグ用）
-                const checkVideoState = () => {
-                    console.log(`ビデオ状態: readyState=${videoElement.readyState}, ` +
-                                `size=${videoElement.videoWidth}x${videoElement.videoHeight}, ` +
-                                `paused=${videoElement.paused}, ended=${videoElement.ended}, ` +
-                                `srcObject=${videoElement.srcObject ? 'あり' : 'なし'}`);
-                };
-
-                // 定期的に状態確認
-                setTimeout(checkVideoState, 1000);
-                setTimeout(checkVideoState, 3000);
-                setTimeout(checkVideoState, 5000);
+                // video要素をセットアップ
+                await setupVideoElement(stream);
 
             } catch (error) {
                 console.error('カメラの初期化に失敗:', error);
@@ -408,58 +418,186 @@
             }
         }
 
+        // ===== 描画ループを開始 =====
+        function startDrawLoop() {
+            requestAnimationFrame(draw);
+            debugLog('描画ループを開始');
+        }
+
+        // ===== カメラストリームを取得（3段階フォールバック） =====
+        async function acquireCameraStream() {
+            // 1段階目: exact environment（アウトカメラを厳密に指定）
+            const exactConstraints = {
+                video: {
+                    facingMode: { exact: 'environment' },
+                    width: { ideal: CONFIG.VIDEO_WIDTH },
+                    height: { ideal: CONFIG.VIDEO_HEIGHT }
+                },
+                audio: false
+            };
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(exactConstraints);
+                debugLog('アウトカメラ(exact)で取得成功');
+                return stream;
+            } catch (e) {
+                debugLog('exact environment指定が失敗、preferで再試行...', e.message);
+            }
+
+            // 2段階目: prefer environment（アウトカメラを優先指定）
+            const preferConstraints = {
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: CONFIG.VIDEO_WIDTH },
+                    height: { ideal: CONFIG.VIDEO_HEIGHT }
+                },
+                audio: false
+            };
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(preferConstraints);
+                debugLog('アウトカメラ(prefer)で取得成功');
+                return stream;
+            } catch (e) {
+                debugLog('environment指定が失敗、制約なしで再試行...', e.message);
+            }
+
+            // 3段階目: 制約なし（どのカメラでも可）
+            const fallbackConstraints = {
+                video: {
+                    width: { ideal: CONFIG.VIDEO_WIDTH },
+                    height: { ideal: CONFIG.VIDEO_HEIGHT }
+                },
+                audio: false
+            };
+
+            const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+            debugLog('制約なしで取得成功');
+            return stream;
+        }
+
+        // ===== video要素のセットアップ =====
+        async function setupVideoElement(stream) {
+            // video要素の属性を設定
+            state.elements.video.setAttribute('autoplay', '');
+            state.elements.video.setAttribute('playsinline', '');
+            state.elements.video.setAttribute('muted', '');
+            state.elements.video.muted = true;
+
+            // ストリームをvideo要素に接続
+            state.elements.video.srcObject = stream;
+            debugLog('ストリームをvideo要素に接続');
+
+            // 再生を開始
+            await playVideoWithRetry();
+
+            // デバッグ用：状態確認
+            scheduleVideoStateCheck();
+        }
+
+        // ===== video再生（リトライ付き） =====
+        async function playVideoWithRetry() {
+            const playVideo = async () => {
+                try {
+                    const playPromise = state.elements.video.play();
+                    if (playPromise !== undefined) {
+                        await playPromise;
+                        debugLog('video.play() 成功');
+                    }
+                } catch (playError) {
+                    console.error('video.play() 失敗:', playError);
+                    // play()が失敗した場合、ユーザーインタラクション後に再試行
+                    const retryPlay = async () => {
+                        try {
+                            await state.elements.video.play();
+                            debugLog('ユーザークリック後のplay()成功');
+                        } catch (e) {
+                            console.error('クリック後のplay()も失敗:', e);
+                        }
+                    };
+                    document.body.addEventListener('click', retryPlay, { once: true });
+                    document.body.addEventListener('touchstart', retryPlay, { once: true });
+                }
+            };
+
+            // loadedmetadataイベントで再生開始
+            if (state.elements.video.readyState >= 1) {
+                debugLog('メタデータ読み込み済み、play()を呼び出し');
+                await playVideo();
+            } else {
+                state.elements.video.addEventListener('loadedmetadata', async () => {
+                    debugLog('loadedmetadata イベント発火');
+                    await playVideo();
+                }, { once: true });
+            }
+        }
+
+        // ===== デバッグ用：video状態確認をスケジュール =====
+        function scheduleVideoStateCheck() {
+            if (!CONFIG.DEBUG) return;  // デバッグモード無効時はスキップ
+
+            const checkVideoState = () => {
+                debugLog(`ビデオ状態: readyState=${state.elements.video.readyState}, ` +
+                         `size=${state.elements.video.videoWidth}x${state.elements.video.videoHeight}, ` +
+                         `paused=${state.elements.video.paused}, ended=${state.elements.video.ended}, ` +
+                         `srcObject=${state.elements.video.srcObject ? 'あり' : 'なし'}`);
+            };
+
+            setTimeout(checkVideoState, 1000);
+            setTimeout(checkVideoState, 3000);
+            setTimeout(checkVideoState, 5000);
+        }
+
         // ===== カメラの能力を確認 =====
         function checkCameraCapabilities() {
-            if (!videoTrack || typeof videoTrack.getCapabilities !== 'function') {
-                console.log('getCapabilities未サポート');
+            if (!state.camera.track || typeof state.camera.track.getCapabilities !== 'function') {
+                debugLog('getCapabilities未サポート');
                 return;
             }
 
-            const capabilities = videoTrack.getCapabilities();
-            console.log('カメラの能力:', capabilities);
+            const capabilities = state.camera.track.getCapabilities();
+            debugLog('カメラの能力:', capabilities);
 
             // フォーカス制御のサポートを確認
             if (capabilities.focusMode) {
-                focusSupported = true;
+                state.camera.focusSupported = true;
                 const supportedModes = capabilities.focusMode;
-                console.log('サポートされているフォーカスモード:', supportedModes);
+                debugLog('サポートされているフォーカスモード:', supportedModes);
 
                 // マニュアルフォーカスのサポートを確認
-                mfSupported = supportedModes.includes('manual');
+                state.camera.mfSupported = supportedModes.includes('manual');
 
-                if (mfSupported && capabilities.focusDistance) {
-                    // カメラの能力を取得し、2-100cmの範囲内でクリップ
+                if (state.camera.mfSupported && capabilities.focusDistance) {
+                    // カメラの能力を取得し、設定範囲内でクリップ
                     const cameraMin = capabilities.focusDistance.min || 0;
                     const cameraMax = capabilities.focusDistance.max || 2;
-                    focusDistanceMin = Math.max(cameraMin, 0.02);  // 最小2cm
-                    focusDistanceMax = Math.min(cameraMax, 1.0);   // 最大100cm
-                    console.log(`フォーカス距離範囲: ${focusDistanceMin}m - ${focusDistanceMax}m`);
+                    state.camera.focusDistanceMin = Math.max(cameraMin, CONFIG.FOCUS_MIN_M);
+                    state.camera.focusDistanceMax = Math.min(cameraMax, CONFIG.FOCUS_MAX_M);
+                    debugLog(`フォーカス距離範囲: ${state.camera.focusDistanceMin}m - ${state.camera.focusDistanceMax}m`);
 
                     // スライダーの範囲を設定（cmに変換）
-                    const slider = document.getElementById('focusSlider');
-                    slider.min = Math.round(focusDistanceMin * 100);
-                    slider.max = Math.round(focusDistanceMax * 100);
-                    slider.value = Math.round((focusDistanceMin + focusDistanceMax) / 2 * 100);
+                    state.elements.focusSlider.min = Math.round(state.camera.focusDistanceMin * 100);
+                    state.elements.focusSlider.max = Math.round(state.camera.focusDistanceMax * 100);
+                    state.elements.focusSlider.value = Math.round((state.camera.focusDistanceMin + state.camera.focusDistanceMax) / 2 * 100);
                 }
 
                 // フォーカスUIを有効化
-                document.getElementById('focusModeBtn').disabled = false;
+                state.elements.focusModeBtn.disabled = false;
             } else {
-                console.log('フォーカス制御は未サポート');
+                debugLog('フォーカス制御は未サポート');
             }
         }
 
         // ===== エラーメッセージを表示 =====
         function showError(message) {
-            const errorDiv = document.getElementById('errorMessage');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+            state.elements.errorMessage.textContent = message;
+            state.elements.errorMessage.style.display = 'block';
         }
 
         // ===== グリッドモードの設定 =====
         function setGridMode(mode) {
-            currentMode = mode;
-            console.log('グリッドモード変更:', mode);
+            state.display.gridMode = mode;
+            debugLog('グリッドモード変更:', mode);
 
             // ボタンのアクティブ状態を更新
             document.querySelectorAll('.grid-buttons button').forEach(btn => {
@@ -469,23 +607,23 @@
 
         // ===== 描画ループ =====
         function draw() {
-            const w = canvas.width;
-            const h = canvas.height;
+            const w = state.elements.canvas.width;
+            const h = state.elements.canvas.height;
 
             // 背景をクリア
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, w, h);
+            state.elements.ctx.fillStyle = '#000';
+            state.elements.ctx.fillRect(0, 0, w, h);
 
             // カメラ映像がまだ準備できていない場合
-            if (!videoElement ||
-                videoElement.readyState < videoElement.HAVE_CURRENT_DATA ||
-                videoElement.videoWidth === 0 ||
-                videoElement.videoHeight === 0) {
+            if (!state.elements.video ||
+                state.elements.video.readyState < state.elements.video.HAVE_CURRENT_DATA ||
+                state.elements.video.videoWidth === 0 ||
+                state.elements.video.videoHeight === 0) {
                 // 待機中のメッセージを表示
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-                ctx.font = '16px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('カメラを準備中...', w / 2, h / 2);
+                state.elements.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                state.elements.ctx.font = '16px sans-serif';
+                state.elements.ctx.textAlign = 'center';
+                state.elements.ctx.fillText('カメラを準備中...', w / 2, h / 2);
 
                 // グリッドラインは表示
                 drawGridLines();
@@ -494,12 +632,12 @@
                 return;
             }
 
-            const vw = videoElement.videoWidth;
-            const vh = videoElement.videoHeight;
+            const vw = state.elements.video.videoWidth;
+            const vh = state.elements.video.videoHeight;
 
-            if (isPlaying) {
+            if (state.animation.isPlaying) {
                 // アニメーション再生中: 現在のフレームのみを全画面表示
-                drawFullFrame(currentFrame, vw, vh, w, h);
+                drawFullFrame(state.animation.currentFrame, vw, vh, w, h);
             } else {
                 // プレビューモード: カメラ映像全体を表示してグリッドラインを描画
                 drawPreview(vw, vh, w, h);
@@ -531,7 +669,7 @@
             }
 
             // カメラ映像を描画
-            ctx.drawImage(videoElement, drawX, drawY, drawWidth, drawHeight);
+            state.elements.ctx.drawImage(state.elements.video, drawX, drawY, drawWidth, drawHeight);
 
             // グリッドラインを描画
             drawGridLines();
@@ -539,38 +677,38 @@
 
         // ===== グリッドラインを描画 =====
         function drawGridLines() {
-            const w = canvas.width;
-            const h = canvas.height;
+            const w = state.elements.canvas.width;
+            const h = state.elements.canvas.height;
 
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-            ctx.lineWidth = 2;
+            state.elements.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            state.elements.ctx.lineWidth = 2;
 
-            if (currentMode === 'grid') {
+            if (state.display.gridMode === 'grid') {
                 // 田んぼモード: 縦線と横線
-                ctx.beginPath();
-                ctx.moveTo(w / 2, 0);
-                ctx.lineTo(w / 2, h);
-                ctx.stroke();
+                state.elements.ctx.beginPath();
+                state.elements.ctx.moveTo(w / 2, 0);
+                state.elements.ctx.lineTo(w / 2, h);
+                state.elements.ctx.stroke();
 
-                ctx.beginPath();
-                ctx.moveTo(0, h / 2);
-                ctx.lineTo(w, h / 2);
-                ctx.stroke();
-            } else if (currentMode === 'column') {
+                state.elements.ctx.beginPath();
+                state.elements.ctx.moveTo(0, h / 2);
+                state.elements.ctx.lineTo(w, h / 2);
+                state.elements.ctx.stroke();
+            } else if (state.display.gridMode === 'column') {
                 // タテ短冊モード: 縦線3本
                 for (let i = 1; i < 4; i++) {
-                    ctx.beginPath();
-                    ctx.moveTo(w / 4 * i, 0);
-                    ctx.lineTo(w / 4 * i, h);
-                    ctx.stroke();
+                    state.elements.ctx.beginPath();
+                    state.elements.ctx.moveTo(w / 4 * i, 0);
+                    state.elements.ctx.lineTo(w / 4 * i, h);
+                    state.elements.ctx.stroke();
                 }
-            } else if (currentMode === 'row') {
+            } else if (state.display.gridMode === 'row') {
                 // ヨコ短冊モード: 横線3本
                 for (let i = 1; i < 4; i++) {
-                    ctx.beginPath();
-                    ctx.moveTo(0, h / 4 * i);
-                    ctx.lineTo(w, h / 4 * i);
-                    ctx.stroke();
+                    state.elements.ctx.beginPath();
+                    state.elements.ctx.moveTo(0, h / 4 * i);
+                    state.elements.ctx.lineTo(w, h / 4 * i);
+                    state.elements.ctx.stroke();
                 }
             }
         }
@@ -580,7 +718,7 @@
             // フレームの領域を計算（ソース側）
             let sx, sy, sw, sh;
 
-            if (currentMode === 'grid') {
+            if (state.display.gridMode === 'grid') {
                 // 田んぼモード: 2x2
                 const col = frameIndex % 2;
                 const row = Math.floor(frameIndex / 2);
@@ -588,13 +726,13 @@
                 sh = vh / 2;
                 sx = col * sw;
                 sy = row * sh;
-            } else if (currentMode === 'column') {
+            } else if (state.display.gridMode === 'column') {
                 // タテ短冊モード: 縦4分割
                 sw = vw / 4;
                 sh = vh;
                 sx = frameIndex * sw;
                 sy = 0;
-            } else if (currentMode === 'row') {
+            } else if (state.display.gridMode === 'row') {
                 // ヨコ短冊モード: 横4分割
                 sw = vw;
                 sh = vh / 4;
@@ -606,12 +744,12 @@
             // 背景は既にdraw()でクリア済み（黒）
             const drawX = (w - sw) / 2;
             const drawY = (h - sh) / 2;
-            ctx.drawImage(videoElement, sx, sy, sw, sh, drawX, drawY, sw, sh);
+            state.elements.ctx.drawImage(state.elements.video, sx, sy, sw, sh, drawX, drawY, sw, sh);
         }
 
         // ===== アニメーション切り替え =====
         function toggleAnimation() {
-            if (isPlaying) {
+            if (state.animation.isPlaying) {
                 stopAnimation();
             } else {
                 startAnimation();
@@ -620,40 +758,38 @@
 
         // ===== アニメーション開始 =====
         function startAnimation() {
-            if (isPlaying) return;
+            if (state.animation.isPlaying) return;
 
-            isPlaying = true;
-            currentFrame = 0;
-            console.log('アニメーション開始');
+            state.animation.isPlaying = true;
+            state.animation.currentFrame = 0;
+            debugLog('アニメーション開始');
 
             // ボタン状態を更新（停止ボタンに変更）
-            const btn = document.getElementById('playStopBtn');
-            btn.textContent = '⏹';
-            btn.title = '停止';
+            state.elements.playStopBtn.textContent = '⏹';
+            state.elements.playStopBtn.title = '停止';
 
-            // 250msごとにフレームを切り替え（1周1秒）
-            animationInterval = setInterval(() => {
-                currentFrame = (currentFrame + 1) % 4;
-            }, 250);
+            // 設定間隔ごとにフレームを切り替え
+            state.animation.intervalId = setInterval(() => {
+                state.animation.currentFrame = (state.animation.currentFrame + 1) % CONFIG.TOTAL_FRAMES;
+            }, CONFIG.FRAME_INTERVAL_MS);
         }
 
         // ===== アニメーション停止 =====
         function stopAnimation() {
-            if (!isPlaying) return;
+            if (!state.animation.isPlaying) return;
 
-            isPlaying = false;
-            currentFrame = 0;
-            console.log('アニメーション停止');
+            state.animation.isPlaying = false;
+            state.animation.currentFrame = 0;
+            debugLog('アニメーション停止');
 
             // ボタン状態を更新（再生ボタンに変更）
-            const btn = document.getElementById('playStopBtn');
-            btn.textContent = '▶';
-            btn.title = '再生';
+            state.elements.playStopBtn.textContent = '▶';
+            state.elements.playStopBtn.title = '再生';
 
             // インターバルをクリア
-            if (animationInterval) {
-                clearInterval(animationInterval);
-                animationInterval = null;
+            if (state.animation.intervalId) {
+                clearInterval(state.animation.intervalId);
+                state.animation.intervalId = null;
             }
         }
 
@@ -671,94 +807,88 @@
 
         // ===== 1ループ録画（ボタン押下で自動撮影） =====
         async function recordOneLoop() {
-            const recordBtn = document.getElementById('recordBtn');
-            const playBtn = document.getElementById('playStopBtn');
-
             // 既に録画中または変換中は無視
-            if (isRecording || isConverting) return;
+            if (state.recording.isRecording || state.recording.isConverting) return;
 
-            console.log('1ループ録画開始');
-            isRecording = true;
-            capturedFrames = [];
+            debugLog('1ループ録画開始');
+            state.recording.isRecording = true;
+            state.recording.capturedFrames = [];
 
             // ボタンの状態を更新
-            recordBtn.classList.add('recording');
-            recordBtn.textContent = '撮影中';
-            recordBtn.disabled = true;
+            state.elements.recordBtn.classList.add('recording');
+            state.elements.recordBtn.textContent = '撮影中';
+            state.elements.recordBtn.disabled = true;
 
             // アニメーションを停止してリセット
-            if (animationInterval) {
-                clearInterval(animationInterval);
-                animationInterval = null;
+            if (state.animation.intervalId) {
+                clearInterval(state.animation.intervalId);
+                state.animation.intervalId = null;
             }
 
-            // 4フレームを順番にキャプチャ
-            const frameInterval = 250; // 250ms per frame
-            const totalFrames = 4;
-
-            for (let i = 0; i < totalFrames; i++) {
+            // フレームを順番にキャプチャ
+            for (let i = 0; i < CONFIG.TOTAL_FRAMES; i++) {
                 // フレームを設定
-                currentFrame = i;
-                isPlaying = true;
+                state.animation.currentFrame = i;
+                state.animation.isPlaying = true;
 
                 // 再生ボタン更新
-                playBtn.textContent = '⏹';
-                playBtn.title = '停止';
+                state.elements.playStopBtn.textContent = '⏹';
+                state.elements.playStopBtn.title = '停止';
 
                 // フレームを描画（draw関数が自動で描画しているが、念のため待機）
                 await new Promise(resolve => setTimeout(resolve, 50));
 
                 // Canvasからフレームをキャプチャ
-                const frameData = canvas.toDataURL('image/png');
-                capturedFrames.push(frameData);
-                console.log(`フレーム ${i} キャプチャ完了`);
+                const frameData = state.elements.canvas.toDataURL('image/png');
+                state.recording.capturedFrames.push(frameData);
+                debugLog(`フレーム ${i} キャプチャ完了`);
 
                 // 次のフレームまで待機（最後のフレーム以外）
-                if (i < totalFrames - 1) {
-                    await new Promise(resolve => setTimeout(resolve, frameInterval));
+                if (i < CONFIG.TOTAL_FRAMES - 1) {
+                    await new Promise(resolve => setTimeout(resolve, CONFIG.FRAME_INTERVAL_MS));
                 }
             }
 
             // 録画終了
-            isRecording = false;
-            isPlaying = false;
-            currentFrame = 0;
+            state.recording.isRecording = false;
+            state.animation.isPlaying = false;
+            state.animation.currentFrame = 0;
 
             // 再生ボタンを元に戻す
-            playBtn.textContent = '▶';
-            playBtn.title = '再生';
+            state.elements.playStopBtn.textContent = '▶';
+            state.elements.playStopBtn.title = '再生';
 
             // MP4生成
-            recordBtn.textContent = '変換中...';
-            isConverting = true;
+            state.elements.recordBtn.textContent = '変換中...';
+            state.recording.isConverting = true;
 
             try {
                 await createMP4FromFrames();
             } catch (error) {
                 console.error('MP4生成エラー:', error);
-                // フォールバック：GIF形式で保存
-                await createGIFFromFrames();
+                // フォールバック：静止画として保存
+                await createFallbackImage();
             }
 
-            isConverting = false;
-            recordBtn.disabled = false;
-            recordBtn.classList.remove('recording');
-            recordBtn.textContent = '⏺';
+            state.recording.isConverting = false;
+            state.elements.recordBtn.disabled = false;
+            state.elements.recordBtn.classList.remove('recording');
+            state.elements.recordBtn.textContent = '⏺';
         }
 
         // ===== フレームからMP4を生成 =====
         async function createMP4FromFrames() {
             // WebCodecs APIのサポート確認
             if (typeof VideoEncoder === 'undefined') {
-                console.log('VideoEncoder未サポート、GIFにフォールバック');
-                await createGIFFromFrames();
+                debugLog('VideoEncoder未サポート、静止画にフォールバック');
+                await createFallbackImage();
                 return;
             }
 
             try {
-                const width = canvas.width;
-                const height = canvas.height;
-                const fps = 4; // 4fps（1秒で4フレーム）
+                const width = state.elements.canvas.width;
+                const height = state.elements.canvas.height;
+                const fps = CONFIG.VIDEO_FPS;
 
                 // mp4-muxerを初期化
                 const muxer = new Mp4Muxer.Muxer({
@@ -772,7 +902,6 @@
                 });
 
                 // VideoEncoderを初期化
-                let encodedChunks = [];
                 const encoder = new VideoEncoder({
                     output: (chunk, meta) => {
                         muxer.addVideoChunk(chunk, meta);
@@ -784,17 +913,17 @@
 
                 // エンコーダーを設定
                 encoder.configure({
-                    codec: 'avc1.42001f', // H.264 Baseline Profile
+                    codec: CONFIG.VIDEO_CODEC,
                     width: width,
                     height: height,
-                    bitrate: 2_000_000,
+                    bitrate: CONFIG.VIDEO_BITRATE,
                     framerate: fps
                 });
 
                 // 各フレームをエンコード
-                for (let i = 0; i < capturedFrames.length; i++) {
+                for (let i = 0; i < state.recording.capturedFrames.length; i++) {
                     const img = new Image();
-                    img.src = capturedFrames[i];
+                    img.src = state.recording.capturedFrames[i];
                     await new Promise(resolve => img.onload = resolve);
 
                     // オフスクリーンCanvasに描画
@@ -824,22 +953,22 @@
                 const blob = new Blob([buffer], { type: 'video/mp4' });
                 downloadBlob(blob, `fretanime_${getTimestamp()}.mp4`);
 
-                console.log('MP4生成完了:', blob.size, 'bytes');
+                debugLog('MP4生成完了:', blob.size, 'bytes');
 
             } catch (error) {
                 console.error('MP4生成エラー:', error);
                 // フォールバック
-                await createGIFFromFrames();
+                await createFallbackImage();
             }
         }
 
-        // ===== フレームからGIFを生成（フォールバック） =====
-        async function createGIFFromFrames() {
-            console.log('GIF形式で保存（MP4が使用できないため）');
+        // ===== フォールバック：静止画として保存 =====
+        async function createFallbackImage() {
+            debugLog('MP4が使用できないため静止画として保存');
 
             // 簡易的にPNG連番として保存
             // または最初のフレームだけをPNGで保存
-            const blob = await (await fetch(capturedFrames[0])).blob();
+            const blob = await (await fetch(state.recording.capturedFrames[0])).blob();
             downloadBlob(blob, `fretanime_${getTimestamp()}_frame0.png`);
 
             alert('お使いの環境ではMP4録画がサポートされていません。\n静止画として保存しました。');
@@ -855,68 +984,64 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            console.log('ファイル保存:', filename);
+            debugLog('ファイル保存:', filename);
         }
 
         // ===== フォーカスモードの切り替え =====
         async function toggleFocusMode() {
-            if (!focusSupported) return;
+            if (!state.camera.focusSupported) return;
 
-            const btn = document.getElementById('focusModeBtn');
-            const slider = document.getElementById('focusSlider');
-            const valueDisplay = document.getElementById('focusValue');
-
-            if (focusMode === 'continuous') {
+            if (state.camera.focusMode === 'continuous') {
                 // MFモードに切り替え
-                if (!mfSupported) {
-                    console.log('マニュアルフォーカスは未サポート');
+                if (!state.camera.mfSupported) {
+                    debugLog('マニュアルフォーカスは未サポート');
                     return;
                 }
 
-                focusMode = 'manual';
-                btn.textContent = 'MF';
-                btn.classList.add('active');
-                slider.disabled = false;
+                state.camera.focusMode = 'manual';
+                state.elements.focusModeBtn.textContent = 'MF';
+                state.elements.focusModeBtn.classList.add('active');
+                state.elements.focusSlider.disabled = false;
 
                 // 現在のスライダー値でフォーカスを設定
-                const distance = slider.value / 100;  // cmをmに変換
+                const distance = state.elements.focusSlider.value / 100;  // cmをmに変換
                 await setFocusDistance(distance);
-                valueDisplay.textContent = `${slider.value}cm`;
+                state.elements.focusValue.textContent = `${state.elements.focusSlider.value}cm`;
 
-                console.log('マニュアルフォーカスモードに切り替え');
+                debugLog('マニュアルフォーカスモードに切り替え');
             } else {
                 // AFモードに切り替え
-                focusMode = 'continuous';
-                btn.textContent = 'AF';
-                btn.classList.remove('active');
-                slider.disabled = true;
-                valueDisplay.textContent = 'AUTO';
+                state.camera.focusMode = 'continuous';
+                state.elements.focusModeBtn.textContent = 'AF';
+                state.elements.focusModeBtn.classList.remove('active');
+                state.elements.focusSlider.disabled = true;
+                state.elements.focusValue.textContent = 'AUTO';
 
                 await setAutoFocus();
-                console.log('オートフォーカスモードに切り替え');
+                debugLog('オートフォーカスモードに切り替え');
             }
         }
 
         // ===== フォーカススライダーの変更 =====
         async function onFocusSliderChange(event) {
-            if (focusMode !== 'manual') return;
+            if (state.camera.focusMode !== 'manual') return;
 
             const value = event.target.value;
             const distance = value / 100;  // cmをmに変換
 
-            document.getElementById('focusValue').textContent = `${value}cm`;
+            state.elements.focusValue.textContent = `${value}cm`;
             await setFocusDistance(distance);
         }
 
         // ===== オートフォーカスを設定 =====
         async function setAutoFocus() {
-            if (!videoTrack) return;
+            if (!state.camera.track) return;
 
             try {
-                await videoTrack.applyConstraints({
+                await state.camera.track.applyConstraints({
                     advanced: [{ focusMode: 'continuous' }]
                 });
-                console.log('オートフォーカスを設定しました');
+                debugLog('オートフォーカスを設定しました');
             } catch (error) {
                 console.error('オートフォーカスの設定に失敗:', error);
             }
@@ -924,16 +1049,16 @@
 
         // ===== フォーカス距離を設定 =====
         async function setFocusDistance(distance) {
-            if (!videoTrack) return;
+            if (!state.camera.track) return;
 
             try {
-                await videoTrack.applyConstraints({
+                await state.camera.track.applyConstraints({
                     advanced: [{
                         focusMode: 'manual',
                         focusDistance: distance
                     }]
                 });
-                console.log(`フォーカス距離を設定: ${distance}m`);
+                debugLog(`フォーカス距離を設定: ${distance}m`);
             } catch (error) {
                 console.error('フォーカス距離の設定に失敗:', error);
             }

@@ -181,4 +181,100 @@ Chromebookでのテスト後、以下の改善を実施：
 
 **コミット:** `1ffcf8b` - feat: MP4録画を確実に動作するように改善
 
+#### 本家アプリとの比較・ドキュメント修正
+
+本家（https://www.fretanime.jp/app/）との違いを1つずつ確認し、以下が判明：
+
+| 項目 | 当初の推定 | 実際の動作 | 修正要否 |
+|------|-----------|-----------|---------|
+| フレーム表示方式 | バッファリング後に再生 | リアルタイム映像を直接分割表示 | 現在の実装で正しい |
+| アニメーション表示 | 全画面に引き伸ばし | 等倍で中央表示、周囲は黒 | 現在の実装で正しい |
+| 録画方式 | 開始/停止トグル | 1ループ自動撮影 | 現在の実装で正しい |
+| UIアイコン | 画像ファイル | - | 修正不要（Unicode文字で可） |
+| フレームワーク | Gatsby + React | - | 修正不要（単一HTMLで可） |
+| フォーカス制御 | なし | - | 維持（本プロジェクト独自機能） |
+
+**ドキュメント修正内容:**
+
+1. **CLAUDE.md**
+   - フォーカス距離範囲: 0.0〜2.0m → 0.02〜1.0m（2cm〜100cm）
+
+2. **fretanime-mf_specification_v1.1.md** → v1.2に更新
+   - WebM → MP4（複数箇所）
+   - フォーカス範囲: 0〜200cm → 2〜100cm
+   - 再生/停止ボタン: 2つ → 1つ（トグル式）
+   - 録画ボタン: 開始/停止 → 1ループ自動撮影
+   - スライダー幅: 100px → 400px
+
+3. **fretanime_analysis.md**
+   - フレームバッファリング → リアルタイム表示に修正
+   - 録画方式を1ループ自動撮影に修正
+   - 再生/停止ボタンをトグル式に修正
+   - 動作確認結果セクションを追加
+
+#### コードリファクタリング（9項目）
+
+コードの保守性・可読性・セキュリティを向上させるため、以下のリファクタリングを実施：
+
+| # | 項目 | 内容 |
+|---|------|------|
+| 1 | 未使用変数の削除 | `mediaRecorder`, `recordedChunks`, `encodedChunks` を削除 |
+| 2 | 定数の一元管理 | `CONFIG` オブジェクトに10個の設定を集約 |
+| 3 | 関数名の修正 | `createGIFFromFrames` → `createFallbackImage`（実態に合わせて） |
+| 4 | 状態管理のオブジェクト化 | `state` オブジェクトで14個の変数を整理 |
+| 5 | initCamera()の分割 | 5つの小さな関数に分割（可読性向上） |
+| 6 | デバッグログの制御 | `debugLog()` で `CONFIG.DEBUG` による制御 |
+| 7 | DOM要素のキャッシュ | 6つのUI要素を起動時にキャッシュ（パフォーマンス向上） |
+| 8 | ページ可視性のハンドリング | タブ切り替え時の省電力対応 |
+| 9 | CDNスクリプトへのSRI追加 | mp4-muxerにintegrity属性を追加（セキュリティ強化） |
+
+**リファクタリング後のコード構造:**
+
+```javascript
+// 設定定数
+const CONFIG = {
+    FRAME_INTERVAL_MS: 250,
+    TOTAL_FRAMES: 4,
+    VIDEO_WIDTH: 1280,
+    VIDEO_HEIGHT: 720,
+    FOCUS_MIN_M: 0.02,
+    FOCUS_MAX_M: 1.0,
+    VIDEO_FPS: 4,
+    VIDEO_BITRATE: 2_000_000,
+    VIDEO_CODEC: 'avc1.42001f',
+    DEBUG: false
+};
+
+// 状態管理
+const state = {
+    elements: { video, canvas, ctx, playStopBtn, recordBtn, ... },
+    camera: { track, focusSupported, mfSupported, focusMode, ... },
+    animation: { isPlaying, currentFrame, intervalId, wasPausedByVisibility },
+    recording: { isRecording, isConverting, capturedFrames },
+    display: { gridMode }
+};
+```
+
+**initCamera() の分割後:**
+- `initCamera()` - メインオーケストレーター
+- `startDrawLoop()` - 描画ループの開始
+- `acquireCameraStream()` - 3段階フォールバックでカメラ取得
+- `setupVideoElement()` - video要素の設定とストリーム接続
+- `playVideoWithRetry()` - 再生開始（ユーザー操作リトライ付き）
+- `scheduleVideoStateCheck()` - デバッグ用状態チェック
+
+#### mp4-muxerライブラリの調査
+
+MP4生成に使用している `mp4-muxer` の信頼性を調査：
+
+| 項目 | 状態 |
+|------|------|
+| ライセンス | MIT |
+| GitHub Stars | 592 ⭐ |
+| 既知の脆弱性 | **なし**（Snykで確認済み） |
+| メンテナンス | ⚠️ 非推奨（deprecated） |
+| 後継 | Mediabunny |
+
+**結論:** 現時点では安全に使用可能。脆弱性が見つかるか新機能が必要になった場合にMediabunnyへ移行を検討。
+
 ---

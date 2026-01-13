@@ -2,8 +2,8 @@
 
 **Claude Code向け 完全実装ガイド**
 
-作成日: 2025年1月14日  
-バージョン: 1.1（修正版）
+作成日: 2025年1月14日
+バージョン: 1.2（2026年1月14日更新）
 
 ---
 
@@ -22,11 +22,11 @@
 - カメラ映像をリアルタイムで分割表示
 - 3種類の分割モード（田んぼ2x2、タテ短冊、ヨコ短冊）
 - 4フレームを順番に切り替えてアニメーション再生
-- 動画書き出し機能（WebM形式）
+- 動画書き出し機能（MP4形式、1ループ自動撮影）
 
 ### 1.5 新規追加機能
 - AF（オートフォーカス）/ MF（マニュアルフォーカス）切り替え
-- MF時のフォーカス距離調整（0cm〜200cm）
+- MF時のフォーカス距離調整（2cm〜100cm）
 
 ---
 
@@ -73,7 +73,7 @@
 | 言語 | HTML5, CSS3, JavaScript (ES6+) | フレームワーク不要 |
 | カメラAPI | MediaDevices.getUserMedia() | WebRTC標準API |
 | 描画 | Canvas API | 2D Context使用 |
-| 録画 | MediaRecorder API | WebM形式出力 |
+| 録画 | WebCodecs API + mp4-muxer | MP4形式出力 |
 | アニメーション | requestAnimationFrame | 60fps対応 |
 
 ### 3.2 フォーカス制御API
@@ -94,8 +94,8 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 
 | パラメータ | 値 | 説明 |
 |-----------|-----|------|
-| 最小値 | 0.0（または端末の最小値） | 最も近い位置（マクロ） |
-| 最大値 | 2.0（200cm = 2m） | 最も遠い位置 |
+| 最小値 | 0.02（2cm） | 最も近い位置（マクロ） |
+| 最大値 | 1.0（100cm） | 最も遠い位置 |
 | 単位 | メートル | 0.01 = 1cm |
 
 > 💡 **実装のヒント**: カメラの能力を事前に`getCapabilities()`で取得し、`focusDistance`のmin/maxを確認すること。サポートされていない場合はUIを無効化する。
@@ -154,9 +154,11 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 
 **配置順序（左から右）:**
 ```
-[AF/MF切替] [フォーカススライダー] [距離表示] | [田] [タテ] [ヨコ] | [▶] [⏹] [⏺]
+[AF/MF切替] [フォーカススライダー] [距離表示] | [田] [タテ] [ヨコ] | [▶/⏹] [⏺]
 └──────── フォーカスUI（新規追加）────────┘   └── グリッド切替 ──┘   └─ 再生/録画 ─┘
 ```
+
+> **注**: 再生/停止ボタンは1つに統合（トグル式）
 
 ### 4.3 フォーカスコントロールUI（新規追加）
 
@@ -167,7 +169,7 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 | 要素 | 種類 | 動作 |
 |------|------|------|
 | AF/MFトグルボタン | ボタン | クリックでAF⇄MF切替。現在のモードを表示 |
-| フォーカススライダー | range input | MF時のみ有効。0cm〜200cmを調整 |
+| フォーカススライダー | range input | MF時のみ有効。2cm〜100cmを調整（幅400px） |
 | 距離表示 | テキスト | 現在のフォーカス距離を数値で表示（例：50cm） |
 
 **状態による表示変化:**
@@ -182,9 +184,8 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 | ボタン | アイコン/テキスト | 機能 |
 |--------|------------------|------|
 | グリッドボタン | 田/タテ/ヨコ | 分割モード切替 |
-| 再生ボタン | ▶ | アニメーション開始 |
-| 停止ボタン | ⏹ | アニメーション停止 |
-| 録画ボタン | ⏺ | 動画録画開始/停止 |
+| 再生/停止ボタン | ▶/⏹ | アニメーション開始/停止（トグル式） |
+| 録画ボタン | ⏺ | 1ループ（4フレーム）自動撮影・保存 |
 
 ### 4.5 デザイン仕様
 
@@ -452,7 +453,7 @@ fretanime-mf/
         }
         
         .focus-slider {
-            width: 100px;
+            width: 400px;
         }
         
         .focus-value {
@@ -474,8 +475,8 @@ fretanime-mf/
         <!-- フォーカスコントロール（新規追加） -->
         <div class="focus-control">
             <button id="focusModeBtn">AF</button>
-            <input type="range" id="focusSlider" class="focus-slider" 
-                   min="0" max="200" value="100" disabled>
+            <input type="range" id="focusSlider" class="focus-slider"
+                   min="2" max="100" value="50" disabled>
             <span id="focusValue" class="focus-value">AUTO</span>
         </div>
         
@@ -491,8 +492,7 @@ fretanime-mf/
         <div style="width: 1px; background: rgba(255,255,255,0.3);"></div>
         
         <!-- 再生/録画 -->
-        <button id="playBtn">▶</button>
-        <button id="stopBtn" disabled>⏹</button>
+        <button id="playStopBtn">▶</button>
         <button id="recordBtn">⏺</button>
     </div>
     
@@ -547,7 +547,7 @@ fretanime-mf/
 | アニメーション | 再生/停止が機能するか | フレームが順番に切り替わる |
 | AF/MF切替 | フォーカスモードが切り替わるか | UIの状態が変わり、実際に制御される |
 | MFスライダー | フォーカス距離が変わるか | スライダー操作でピントが変化 |
-| 動画録画 | 録画と保存ができるか | WebMファイルがダウンロードされる |
+| 動画録画 | 録画と保存ができるか | MP4ファイルがダウンロードされる |
 | UIオーバーレイ | UIが映像の上に表示されるか | 右上に半透明UIが重なる |
 
 ---
