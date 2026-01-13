@@ -36,14 +36,14 @@
 - フレームレート: 4fps（1秒4フレーム）
 - ファイル名: fretanime_[YYYYMMDD_HHMMSS].mp4
 - 録画方式: 1ループ自動撮影（ボタン押下で4フレーム撮影）
-- 実装: WebCodecs API + mp4-muxer
+- 実装: h264-mp4-encoder (WASM)
 
-### mp4-muxer について
-- バージョン: 5.1.3（CDN経由で読み込み）
-- ライセンス: MIT
+### h264-mp4-encoder について
+- バージョン: 1.0.12（CDN経由で読み込み）
+- ライセンス: MIT + Public Domain (minih264) + MPL 1.1 (libmp4v2)
 - セキュリティ: SRI (Subresource Integrity) 設定済み
-- 状態: 非推奨（deprecated）だが、既知の脆弱性なし
-- 後継: Mediabunny（必要になった場合に移行検討）
+- 特徴: WASMベースのソフトウェアエンコード（SharedArrayBuffer不要）
+- Chromebook対応: ○（ハードウェアエンコーダー不要）
 
 ## コード構造
 
@@ -89,5 +89,5 @@ fretanime-mf/
 
 1. **video要素のCSS**: `display: none` ではなく画面外配置（`position: fixed; top: -9999px`）
 2. **3段階カメラフォールバック**: exact → prefer → 制約なし
-3. **mp4-muxer + WebCodecs API**: FFmpegは使用しない（SharedArrayBuffer問題）
+3. **h264-mp4-encoder**: FFmpegやWebCodecs APIは使用しない（SharedArrayBuffer/ハードウェア依存問題）
 4. **ユーザー操作リトライ**: video.play()失敗時のclick/touchstartリスナー

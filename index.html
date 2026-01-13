@@ -6,8 +6,24 @@
     <title>fretanime-mf</title>
     <!-- h264-mp4-encoder: WASM版H.264エンコーダー（SharedArrayBuffer不要） -->
     <!-- ライセンス: MIT (h264-mp4-encoder) + Public Domain (minih264) + MPL 1.1 (libmp4v2) -->
-    <script src="https://unpkg.com/h264-mp4-encoder@1.0.12/embuild/dist/h264-mp4-encoder.web.js"></script>
+    <script src="https://unpkg.com/h264-mp4-encoder@1.0.12/embuild/dist/h264-mp4-encoder.web.js"
+            integrity="sha384-6NZ5RcUgpHzi0/ouwZRpgRLOXAWfPdQlDj+KVSTn18Zds1Igbs/gVio8A8NG97x1"
+            crossorigin="anonymous"></script>
     <style>
+        /* ===== CSS変数 ===== */
+        :root {
+            --color-bg: #000;
+            --color-overlay: rgba(0, 0, 0, 0.6);
+            --color-overlay-dark: rgba(0, 0, 0, 0.8);
+            --color-button: rgba(255, 255, 255, 0.2);
+            --color-button-hover: rgba(255, 255, 255, 0.3);
+            --color-active: #4a90d9;
+            --color-recording: #d94a4a;
+            --color-text: white;
+            --color-text-muted: rgba(255, 255, 255, 0.5);
+            --color-divider: rgba(255, 255, 255, 0.3);
+        }
+
         /* ===== リセット & 基本スタイル ===== */
         * {
             margin: 0;
@@ -17,7 +33,7 @@
 
         body {
             overflow: hidden;  /* スクロール禁止 */
-            background: #000;
+            background: var(--color-bg);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
 
@@ -49,13 +65,13 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            color: white;
+            color: var(--color-text);
             font-size: 18px;
             text-align: center;
             padding: 20px;
-            background: rgba(0, 0, 0, 0.8);
+            background: var(--color-overlay-dark);
             border-radius: 10px;
-            z-index: 200;
+            z-index: 200;  /* CONFIG.Z_INDEX_ERROR と同期 */
             display: none;
         }
 
@@ -67,10 +83,10 @@
             display: flex;
             align-items: center;
             gap: 20px;
-            background: rgba(0, 0, 0, 0.6);
+            background: var(--color-overlay);
             padding: 20px 30px;
             border-radius: 16px;
-            z-index: 100;
+            z-index: 100;  /* CONFIG.Z_INDEX_UI と同期 */
         }
 
         /* ===== ボタン共通スタイル ===== */
@@ -81,14 +97,14 @@
             cursor: pointer;
             font-size: 28px;
             font-weight: bold;
-            color: white;
-            background: rgba(255, 255, 255, 0.2);
+            color: var(--color-text);
+            background: var(--color-button);
             transition: background 0.2s, transform 0.1s;
             min-width: 88px;
         }
 
         button:hover {
-            background: rgba(255, 255, 255, 0.3);
+            background: var(--color-button-hover);
         }
 
         button:active {
@@ -96,7 +112,7 @@
         }
 
         button.active {
-            background: #4a90d9;
+            background: var(--color-active);
         }
 
         button:disabled {
@@ -105,12 +121,12 @@
         }
 
         button:disabled:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: var(--color-button);
         }
 
         /* ===== 録画中のスタイル ===== */
         button.recording {
-            background: #d94a4a;
+            background: var(--color-recording);
             animation: pulse 1s infinite;
         }
 
@@ -131,7 +147,7 @@
             height: 12px;
             -webkit-appearance: none;
             appearance: none;
-            background: rgba(255, 255, 255, 0.3);
+            background: var(--color-divider);
             border-radius: 6px;
             outline: none;
         }
@@ -141,7 +157,7 @@
             appearance: none;
             width: 32px;
             height: 32px;
-            background: white;
+            background: var(--color-text);
             border-radius: 50%;
             cursor: pointer;
         }
@@ -156,7 +172,7 @@
 
         .focus-value {
             min-width: 110px;
-            color: white;
+            color: var(--color-text);
             font-size: 24px;
             text-align: center;
         }
@@ -165,7 +181,7 @@
         .divider {
             width: 2px;
             height: 48px;
-            background: rgba(255, 255, 255, 0.3);
+            background: var(--color-divider);
         }
 
         /* ===== グリッドモードボタン ===== */
@@ -240,6 +256,14 @@
             VIDEO_FPS: 4,
             VIDEO_QUALITY: 26,           // h264-mp4-encoder品質（10-51、低いほど高品質）
 
+            // UI設定（CSS側と同期が必要）
+            Z_INDEX_UI: 100,             // UIコンテナのz-index
+            Z_INDEX_ERROR: 200,          // エラーメッセージのz-index
+
+            // タイミング設定
+            FRAME_CAPTURE_DELAY_MS: 50,  // フレームキャプチャ前の描画待機時間
+            DEBUG_CHECK_INTERVALS_MS: [1000, 3000, 5000],  // デバッグ用状態確認タイミング
+
             // デバッグモード
             DEBUG: false
         };
@@ -264,7 +288,8 @@
                 focusModeBtn: null,        // AF/MFボタン
                 focusSlider: null,         // フォーカススライダー
                 focusValue: null,          // フォーカス値表示
-                errorMessage: null         // エラーメッセージ
+                errorMessage: null,        // エラーメッセージ
+                gridButtons: null          // グリッドボタン配列
             },
 
             // カメラ関連
@@ -312,6 +337,7 @@
             state.elements.focusSlider = document.getElementById('focusSlider');
             state.elements.focusValue = document.getElementById('focusValue');
             state.elements.errorMessage = document.getElementById('errorMessage');
+            state.elements.gridButtons = document.querySelectorAll('.grid-buttons button');
 
             // Canvasサイズの初期設定
             resizeCanvas();
@@ -321,6 +347,9 @@
 
             // カメラの初期化
             initCamera();
+
+            // エンコーダーの事前ロード（非同期、カメラ初期化と並行）
+            preloadEncoder();
         });
 
         // ===== Canvasサイズの設定 =====
@@ -353,7 +382,7 @@
             state.elements.focusModeBtn.addEventListener('click', toggleFocusMode);
 
             // フォーカススライダー
-            state.elements.focusSlider.addEventListener('input', onFocusSliderChange);
+            state.elements.focusSlider.addEventListener('input', handleFocusSliderChange);
         }
 
         // ===== ページ可視性変更ハンドラー =====
@@ -387,7 +416,10 @@
             }
         }
 
-        // ===== カメラの初期化 =====
+        /**
+         * カメラを初期化し、映像ストリームを取得する
+         * @returns {Promise<void>}
+         */
         async function initCamera() {
             debugLog('カメラを初期化中...');
 
@@ -421,7 +453,11 @@
             debugLog('描画ループを開始');
         }
 
-        // ===== カメラストリームを取得（3段階フォールバック） =====
+        /**
+         * カメラストリームを取得する（3段階フォールバック）
+         * 1. exact environment → 2. prefer environment → 3. 制約なし
+         * @returns {Promise<MediaStream>} カメラのメディアストリーム
+         */
         async function acquireCameraStream() {
             // 1段階目: exact environment（アウトカメラを厳密に指定）
             const exactConstraints = {
@@ -473,7 +509,11 @@
             return stream;
         }
 
-        // ===== video要素のセットアップ =====
+        /**
+         * video要素をセットアップし、ストリームを接続する
+         * @param {MediaStream} stream - カメラのメディアストリーム
+         * @returns {Promise<void>}
+         */
         async function setupVideoElement(stream) {
             // video要素の属性を設定
             state.elements.video.setAttribute('autoplay', '');
@@ -540,9 +580,9 @@
                          `srcObject=${state.elements.video.srcObject ? 'あり' : 'なし'}`);
             };
 
-            setTimeout(checkVideoState, 1000);
-            setTimeout(checkVideoState, 3000);
-            setTimeout(checkVideoState, 5000);
+            CONFIG.DEBUG_CHECK_INTERVALS_MS.forEach(interval => {
+                setTimeout(checkVideoState, interval);
+            });
         }
 
         // ===== カメラの能力を確認 =====
@@ -585,19 +625,25 @@
             }
         }
 
-        // ===== エラーメッセージを表示 =====
+        /**
+         * エラーメッセージを画面中央に表示する
+         * @param {string} message - 表示するエラーメッセージ
+         */
         function showError(message) {
             state.elements.errorMessage.textContent = message;
             state.elements.errorMessage.style.display = 'block';
         }
 
-        // ===== グリッドモードの設定 =====
+        /**
+         * グリッドモードを設定する
+         * @param {'grid' | 'column' | 'row'} mode - グリッドモード
+         */
         function setGridMode(mode) {
             state.display.gridMode = mode;
             debugLog('グリッドモード変更:', mode);
 
             // ボタンのアクティブ状態を更新
-            document.querySelectorAll('.grid-buttons button').forEach(btn => {
+            state.elements.gridButtons.forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.mode === mode);
             });
         }
@@ -672,47 +718,53 @@
             drawGridLines();
         }
 
-        // ===== グリッドラインを描画 =====
+        // ===== グリッドライン設定 =====
+        const GRID_LINES = {
+            grid:   { vertical: [0.5], horizontal: [0.5] },           // 田んぼ: 縦1本、横1本
+            column: { vertical: [0.25, 0.5, 0.75], horizontal: [] },  // タテ短冊: 縦3本
+            row:    { vertical: [], horizontal: [0.25, 0.5, 0.75] }   // ヨコ短冊: 横3本
+        };
+
+        /**
+         * 線を描画する
+         * @param {number} x1 - 始点X
+         * @param {number} y1 - 始点Y
+         * @param {number} x2 - 終点X
+         * @param {number} y2 - 終点Y
+         */
+        function drawLine(x1, y1, x2, y2) {
+            state.elements.ctx.beginPath();
+            state.elements.ctx.moveTo(x1, y1);
+            state.elements.ctx.lineTo(x2, y2);
+            state.elements.ctx.stroke();
+        }
+
+        /**
+         * グリッドラインを描画する
+         */
         function drawGridLines() {
             const w = state.elements.canvas.width;
             const h = state.elements.canvas.height;
+            const lines = GRID_LINES[state.display.gridMode];
 
             state.elements.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
             state.elements.ctx.lineWidth = 2;
 
-            if (state.display.gridMode === 'grid') {
-                // 田んぼモード: 縦線と横線
-                state.elements.ctx.beginPath();
-                state.elements.ctx.moveTo(w / 2, 0);
-                state.elements.ctx.lineTo(w / 2, h);
-                state.elements.ctx.stroke();
+            // 縦線を描画
+            lines.vertical.forEach(ratio => drawLine(w * ratio, 0, w * ratio, h));
 
-                state.elements.ctx.beginPath();
-                state.elements.ctx.moveTo(0, h / 2);
-                state.elements.ctx.lineTo(w, h / 2);
-                state.elements.ctx.stroke();
-            } else if (state.display.gridMode === 'column') {
-                // タテ短冊モード: 縦線3本
-                for (let i = 1; i < 4; i++) {
-                    state.elements.ctx.beginPath();
-                    state.elements.ctx.moveTo(w / 4 * i, 0);
-                    state.elements.ctx.lineTo(w / 4 * i, h);
-                    state.elements.ctx.stroke();
-                }
-            } else if (state.display.gridMode === 'row') {
-                // ヨコ短冊モード: 横線3本
-                for (let i = 1; i < 4; i++) {
-                    state.elements.ctx.beginPath();
-                    state.elements.ctx.moveTo(0, h / 4 * i);
-                    state.elements.ctx.lineTo(w, h / 4 * i);
-                    state.elements.ctx.stroke();
-                }
-            }
+            // 横線を描画
+            lines.horizontal.forEach(ratio => drawLine(0, h * ratio, w, h * ratio));
         }
 
-        // ===== フレームを等倍で中央描画 =====
-        function drawFullFrame(frameIndex, vw, vh, w, h) {
-            // フレームの領域を計算（ソース側）
+        /**
+         * フレームのソース領域を計算する
+         * @param {number} frameIndex - フレーム番号（0-3）
+         * @param {number} vw - ビデオの幅
+         * @param {number} vh - ビデオの高さ
+         * @returns {{sx: number, sy: number, sw: number, sh: number}} ソース領域
+         */
+        function getFrameRect(frameIndex, vw, vh) {
             let sx, sy, sw, sh;
 
             if (state.display.gridMode === 'grid') {
@@ -729,7 +781,7 @@
                 sh = vh;
                 sx = frameIndex * sw;
                 sy = 0;
-            } else if (state.display.gridMode === 'row') {
+            } else {
                 // ヨコ短冊モード: 横4分割
                 sw = vw;
                 sh = vh / 4;
@@ -737,11 +789,34 @@
                 sy = frameIndex * sh;
             }
 
+            return { sx, sy, sw, sh };
+        }
+
+        /**
+         * 指定フレームを等倍で画面中央に描画する
+         * @param {number} frameIndex - フレーム番号（0-3）
+         * @param {number} vw - ビデオの幅
+         * @param {number} vh - ビデオの高さ
+         * @param {number} w - キャンバスの幅
+         * @param {number} h - キャンバスの高さ
+         */
+        function drawFullFrame(frameIndex, vw, vh, w, h) {
+            const { sx, sy, sw, sh } = getFrameRect(frameIndex, vw, vh);
+
             // 等倍で中央に描画（引き伸ばさない）
             // 背景は既にdraw()でクリア済み（黒）
             const drawX = (w - sw) / 2;
             const drawY = (h - sh) / 2;
             state.elements.ctx.drawImage(state.elements.video, sx, sy, sw, sh, drawX, drawY, sw, sh);
+        }
+
+        /**
+         * 再生/停止ボタンの状態を更新する
+         * @param {boolean} isPlaying - 再生中かどうか
+         */
+        function updatePlayButtonState(isPlaying) {
+            state.elements.playStopBtn.textContent = isPlaying ? '⏹' : '▶';
+            state.elements.playStopBtn.title = isPlaying ? '停止' : '再生';
         }
 
         // ===== アニメーション切り替え =====
@@ -753,7 +828,9 @@
             }
         }
 
-        // ===== アニメーション開始 =====
+        /**
+         * アニメーション再生を開始する
+         */
         function startAnimation() {
             if (state.animation.isPlaying) return;
 
@@ -762,8 +839,7 @@
             debugLog('アニメーション開始');
 
             // ボタン状態を更新（停止ボタンに変更）
-            state.elements.playStopBtn.textContent = '⏹';
-            state.elements.playStopBtn.title = '停止';
+            updatePlayButtonState(true);
 
             // 設定間隔ごとにフレームを切り替え
             state.animation.intervalId = setInterval(() => {
@@ -771,7 +847,9 @@
             }, CONFIG.FRAME_INTERVAL_MS);
         }
 
-        // ===== アニメーション停止 =====
+        /**
+         * アニメーション再生を停止する
+         */
         function stopAnimation() {
             if (!state.animation.isPlaying) return;
 
@@ -780,8 +858,7 @@
             debugLog('アニメーション停止');
 
             // ボタン状態を更新（再生ボタンに変更）
-            state.elements.playStopBtn.textContent = '▶';
-            state.elements.playStopBtn.title = '再生';
+            updatePlayButtonState(false);
 
             // インターバルをクリア
             if (state.animation.intervalId) {
@@ -790,7 +867,10 @@
             }
         }
 
-        // ===== タイムスタンプ生成（読みやすい形式） =====
+        /**
+         * ファイル名用のタイムスタンプを生成する
+         * @returns {string} YYYYMMDD_HHMMSS形式のタイムスタンプ
+         */
         function getTimestamp() {
             const now = new Date();
             const year = now.getFullYear();
@@ -802,38 +882,50 @@
             return `${year}${month}${day}_${hours}${minutes}${seconds}`;
         }
 
-        // ===== 1ループ録画（ボタン押下で自動撮影） =====
-        async function recordOneLoop() {
-            // 既に録画中または変換中は無視
-            if (state.recording.isRecording || state.recording.isConverting) return;
+        /**
+         * 録画UIの状態を更新する
+         * @param {'recording' | 'converting' | 'idle'} uiState - UI状態
+         */
+        function setRecordingUIState(uiState) {
+            switch (uiState) {
+                case 'recording':
+                    state.elements.recordBtn.classList.add('recording');
+                    state.elements.recordBtn.textContent = '撮影中';
+                    state.elements.recordBtn.disabled = true;
+                    break;
+                case 'converting':
+                    state.elements.recordBtn.textContent = '変換中...';
+                    break;
+                case 'idle':
+                    state.elements.recordBtn.disabled = false;
+                    state.elements.recordBtn.classList.remove('recording');
+                    state.elements.recordBtn.textContent = '⏺';
+                    break;
+            }
+        }
 
-            debugLog('1ループ録画開始');
-            state.recording.isRecording = true;
-            state.recording.capturedFrames = [];
-
-            // ボタンの状態を更新
-            state.elements.recordBtn.classList.add('recording');
-            state.elements.recordBtn.textContent = '撮影中';
-            state.elements.recordBtn.disabled = true;
-
+        /**
+         * 4フレームを順番にキャプチャする
+         * @returns {Promise<void>}
+         */
+        async function captureFrames() {
             // アニメーションを停止してリセット
             if (state.animation.intervalId) {
                 clearInterval(state.animation.intervalId);
                 state.animation.intervalId = null;
             }
 
+            // キャプチャ開始時に状態を設定（ループ前に1回だけ）
+            state.animation.isPlaying = true;
+            updatePlayButtonState(true);
+
             // フレームを順番にキャプチャ
             for (let i = 0; i < CONFIG.TOTAL_FRAMES; i++) {
                 // フレームを設定
                 state.animation.currentFrame = i;
-                state.animation.isPlaying = true;
-
-                // 再生ボタン更新
-                state.elements.playStopBtn.textContent = '⏹';
-                state.elements.playStopBtn.title = '停止';
 
                 // フレームを描画（draw関数が自動で描画しているが、念のため待機）
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await new Promise(resolve => setTimeout(resolve, CONFIG.FRAME_CAPTURE_DELAY_MS));
 
                 // Canvasからフレームをキャプチャ
                 const frameData = state.elements.canvas.toDataURL('image/png');
@@ -846,34 +938,73 @@
                 }
             }
 
-            // 録画終了
-            state.recording.isRecording = false;
+            // キャプチャ終了後の状態リセット
             state.animation.isPlaying = false;
             state.animation.currentFrame = 0;
+            updatePlayButtonState(false);
+        }
 
-            // 再生ボタンを元に戻す
-            state.elements.playStopBtn.textContent = '▶';
-            state.elements.playStopBtn.title = '再生';
+        /**
+         * 1ループ分（4フレーム）を録画してMP4として保存する
+         * @returns {Promise<void>}
+         */
+        async function recordOneLoop() {
+            // 既に録画中または変換中は無視
+            if (state.recording.isRecording || state.recording.isConverting) return;
+
+            debugLog('1ループ録画開始');
+            state.recording.isRecording = true;
+            state.recording.capturedFrames = [];
+
+            // 録画UI表示
+            setRecordingUIState('recording');
+
+            // フレームキャプチャ
+            await captureFrames();
+
+            // 録画終了、変換開始
+            state.recording.isRecording = false;
+            state.recording.isConverting = true;
+            setRecordingUIState('converting');
 
             // MP4生成
-            state.elements.recordBtn.textContent = '変換中...';
-            state.recording.isConverting = true;
-
             try {
                 await createMP4FromFrames();
             } catch (error) {
                 console.error('MP4生成エラー:', error);
-                // フォールバック：静止画として保存
                 await createFallbackImage();
             }
 
+            // 状態リセット・UI復帰
             state.recording.isConverting = false;
-            state.elements.recordBtn.disabled = false;
-            state.elements.recordBtn.classList.remove('recording');
-            state.elements.recordBtn.textContent = '⏺';
+            setRecordingUIState('idle');
         }
 
-        // ===== フレームからMP4を生成（h264-mp4-encoder使用） =====
+        /**
+         * h264-mp4-encoderを事前ロードする（ウォームアップ）
+         * 初回録画時の遅延を解消するため、起動時に呼び出す
+         * @returns {Promise<void>}
+         */
+        async function preloadEncoder() {
+            if (typeof HME === 'undefined') {
+                debugLog('h264-mp4-encoder 未ロード、事前ロードをスキップ');
+                return;
+            }
+
+            try {
+                const encoder = await HME.createH264MP4Encoder();
+                encoder.delete();  // すぐに解放
+                debugLog('h264-mp4-encoder 事前ロード完了');
+            } catch (e) {
+                debugLog('h264-mp4-encoder 事前ロード失敗:', e);
+            }
+        }
+
+        /**
+         * キャプチャしたフレームからMP4動画を生成する
+         * h264-mp4-encoderを使用してH.264/MP4形式で出力
+         * @returns {Promise<void>}
+         */
         async function createMP4FromFrames() {
             // h264-mp4-encoderのサポート確認
             if (typeof HME === 'undefined') {
@@ -902,16 +1033,20 @@
                 encoder.initialize();
 
                 // オフスクリーンCanvas（リサイズ用）
+                // willReadFrequently: getImageData()を頻繁に呼ぶため最適化
                 const offscreen = document.createElement('canvas');
                 offscreen.width = encoderWidth;
                 offscreen.height = encoderHeight;
-                const offCtx = offscreen.getContext('2d');
+                const offCtx = offscreen.getContext('2d', { willReadFrequently: true });
 
                 // 各フレームを追加
                 for (let i = 0; i < state.recording.capturedFrames.length; i++) {
                     const img = new Image();
                     img.src = state.recording.capturedFrames[i];
-                    await new Promise(resolve => img.onload = resolve);
+                    await new Promise((resolve, reject) => {
+                        img.onload = resolve;
+                        img.onerror = () => reject(new Error(`フレーム ${i} の読み込みに失敗`));
+                    });
 
                     offCtx.drawImage(img, 0, 0, encoderWidth, encoderHeight);
                     const imageData = offCtx.getImageData(0, 0, encoderWidth, encoderHeight);
@@ -939,19 +1074,36 @@
             }
         }
 
-        // ===== フォールバック：静止画として保存 =====
+        /**
+         * MP4生成失敗時のフォールバック処理
+         * 最初のフレームをPNG画像として保存する
+         * @returns {Promise<void>}
+         */
         async function createFallbackImage() {
             debugLog('MP4が使用できないため静止画として保存');
 
-            // 簡易的にPNG連番として保存
-            // または最初のフレームだけをPNGで保存
-            const blob = await (await fetch(state.recording.capturedFrames[0])).blob();
-            downloadBlob(blob, `fretanime_${getTimestamp()}_frame0.png`);
+            // キャプチャフレームの存在確認
+            if (!state.recording.capturedFrames || state.recording.capturedFrames.length === 0) {
+                console.error('フォールバック保存失敗: キャプチャフレームがありません');
+                alert('撮影に失敗しました。もう一度お試しください。');
+                return;
+            }
 
-            alert('お使いの環境ではMP4録画がサポートされていません。\n静止画として保存しました。');
+            try {
+                const blob = await (await fetch(state.recording.capturedFrames[0])).blob();
+                downloadBlob(blob, `fretanime_${getTimestamp()}_frame0.png`);
+                alert('お使いの環境ではMP4録画がサポートされていません。\n静止画として保存しました。');
+            } catch (error) {
+                console.error('フォールバック保存エラー:', error);
+                alert('ファイルの保存に失敗しました。');
+            }
         }
 
-        // ===== Blobをダウンロード =====
+        /**
+         * Blobデータをファイルとしてダウンロードする
+         * @param {Blob} blob - ダウンロードするデータ
+         * @param {string} filename - ファイル名
+         */
         function downloadBlob(blob, filename) {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1000,7 +1152,7 @@
         }
 
         // ===== フォーカススライダーの変更 =====
-        async function onFocusSliderChange(event) {
+        async function handleFocusSliderChange(event) {
             if (state.camera.focusMode !== 'manual') return;
 
             const value = event.target.value;
@@ -1010,7 +1162,10 @@
             await setFocusDistance(distance);
         }
 
-        // ===== オートフォーカスを設定 =====
+        /**
+         * オートフォーカス（連続AF）モードを設定する
+         * @returns {Promise<void>}
+         */
         async function setAutoFocus() {
             if (!state.camera.track) return;
 
@@ -1024,18 +1179,28 @@
             }
         }
 
-        // ===== フォーカス距離を設定 =====
+        /**
+         * マニュアルフォーカスの距離を設定する
+         * @param {number} distance - フォーカス距離（メートル単位、0.02〜1.0）
+         * @returns {Promise<void>}
+         */
         async function setFocusDistance(distance) {
             if (!state.camera.track) return;
+
+            // 距離を有効範囲内にクランプ
+            const clampedDistance = Math.max(
+                state.camera.focusDistanceMin,
+                Math.min(state.camera.focusDistanceMax, distance)
+            );
 
             try {
                 await state.camera.track.applyConstraints({
                     advanced: [{
                         focusMode: 'manual',
-                        focusDistance: distance
+                        focusDistance: clampedDistance
                     }]
                 });
-                debugLog(`フォーカス距離を設定: ${distance}m`);
+                debugLog(`フォーカス距離を設定: ${clampedDistance}m`);
             } catch (error) {
                 console.error('フォーカス距離の設定に失敗:', error);
             }
