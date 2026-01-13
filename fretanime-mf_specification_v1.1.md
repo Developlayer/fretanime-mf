@@ -104,10 +104,13 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 
 | 項目 | 仕様 |
 |------|------|
-| 出力形式 | WebM (video/webm) |
-| コーデック | VP9またはVP8（ブラウザ依存） |
-| フレームレート | 30fps |
-| ファイル名 | fretanime_[timestamp].webm |
+| 出力形式 | MP4 (video/mp4) |
+| コーデック | H.264 (AVC) |
+| フレームレート | 4fps（1秒4フレーム） |
+| ファイル名 | fretanime_[YYYYMMDD_HHMMSS].mp4 |
+| 録画方式 | 1ループ自動撮影（ボタン押下で4フレーム撮影） |
+
+> **実装メモ**: WebCodecs API (VideoEncoder) + mp4-muxer ライブラリを使用してMP4を生成。
 
 ---
 
@@ -327,9 +330,10 @@ function drawGridLines(ctx, mode) {
 
 | パラメータ | 値 | 説明 |
 |-----------|-----|------|
-| フレーム間隔 | 200ms（固定） | オリジナルと同等速度 |
+| フレーム間隔 | 250ms | 1周1秒（4フレーム×250ms） |
 | ループ | 無限ループ | 停止ボタンで終了 |
 | 表示順序 | 0→1→2→3→0→... | インデックス順に繰り返し |
+| 表示方法 | 等倍で中央表示 | 引き伸ばさず、周囲は黒 |
 
 ---
 
