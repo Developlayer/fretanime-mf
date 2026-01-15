@@ -256,6 +256,7 @@
             <h3>現在のAPI値</h3>
             <div><span class="label">設定値:</span> <span id="dbgFocusSet" class="value">-</span></div>
             <div><span class="label">適用値:</span> <span id="dbgFocusActual" class="value">-</span></div>
+            <div><span class="label">focusMode:</span> <span id="dbgFocusMode" class="value">-</span></div>
         </div>
         <div class="section">
             <h3>UI値</h3>
@@ -395,6 +396,7 @@
             if (state.camera.track) {
                 const settings = state.camera.track.getSettings();
                 state.elements.dbgFocusActual.textContent = settings.focusDistance ?? '-';
+                state.elements.dbgFocusMode.textContent = settings.focusMode ?? '-';
             }
         }
 
@@ -419,6 +421,7 @@
                 dbgFocusStep: null,        // focusDistance.step表示
                 dbgFocusSet: null,         // 設定値表示
                 dbgFocusActual: null,      // 適用値表示
+                dbgFocusMode: null,        // focusMode表示
                 dbgSliderValue: null,      // スライダー値表示
                 dbgDisplayValue: null      // 表示値
             },
@@ -476,6 +479,7 @@
             state.elements.dbgFocusStep = document.getElementById('dbgFocusStep');
             state.elements.dbgFocusSet = document.getElementById('dbgFocusSet');
             state.elements.dbgFocusActual = document.getElementById('dbgFocusActual');
+            state.elements.dbgFocusMode = document.getElementById('dbgFocusMode');
             state.elements.dbgSliderValue = document.getElementById('dbgSliderValue');
             state.elements.dbgDisplayValue = document.getElementById('dbgDisplayValue');
 
@@ -581,7 +585,7 @@
                 debugLog('トラック設定:', JSON.stringify(state.camera.track.getSettings()));
 
                 // カメラの能力を確認
-                checkCameraCapabilities();
+                await checkCameraCapabilities();
 
                 // video要素をセットアップ
                 await setupVideoElement(stream);
@@ -731,7 +735,7 @@
         }
 
         // ===== カメラの能力を確認 =====
-        function checkCameraCapabilities() {
+        async function checkCameraCapabilities() {
             if (!state.camera.track || typeof state.camera.track.getCapabilities !== 'function') {
                 debugLog('getCapabilities未サポート');
                 return;
@@ -774,7 +778,7 @@
                 state.elements.focusModeBtn.classList.add('active');
 
                 // 初期状態で∞モードを適用
-                setFocusDistance(Infinity);
+                await setFocusDistance(Infinity);
                 updateDebugFocusValues(Infinity, '-', '∞');
             } else {
                 debugLog('フォーカス制御は未サポート');
@@ -1375,7 +1379,10 @@
                 await state.camera.track.applyConstraints({
                     advanced: [{ focusMode: 'continuous' }]
                 });
-                debugLog('オートフォーカスを設定しました');
+
+                // 設定後の実際の値を確認
+                const settings = state.camera.track.getSettings();
+                debugLog(`AF設定: 適用focusMode=${settings.focusMode}`);
             } catch (error) {
                 console.error('オートフォーカスの設定に失敗:', error);
             }
@@ -1396,7 +1403,10 @@
                         focusDistance: apiValue
                     }]
                 });
-                debugLog(`フォーカス距離を設定: ${apiValue}`);
+
+                // 設定後の実際の値を確認
+                const settings = state.camera.track.getSettings();
+                debugLog(`フォーカス設定: 要求=${apiValue}, 適用focusMode=${settings.focusMode}, 適用focusDistance=${settings.focusDistance}`);
             } catch (error) {
                 console.error('フォーカス距離の設定に失敗:', error);
             }
