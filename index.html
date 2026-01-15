@@ -277,7 +277,7 @@
         <div class="focus-control">
             <button id="focusModeBtn" disabled>AF</button>
             <input type="range" id="focusSlider" class="focus-slider"
-                   min="2" max="100" value="50" step="1" disabled>
+                   min="100" max="500" value="300" step="1" disabled>
             <span id="focusValue" class="focus-value">AUTO</span>
         </div>
 
@@ -313,8 +313,8 @@
             VIDEO_HEIGHT: 720,
 
             // フォーカス設定（メートル単位）
-            FOCUS_MIN_M: 0.02,           // 2cm
-            FOCUS_MAX_M: 1.0,            // 100cm
+            FOCUS_MIN_M: 1.0,            // 100cm
+            FOCUS_MAX_M: 5.0,            // 500cm
 
             // 録画設定
             VIDEO_FPS: 4,
