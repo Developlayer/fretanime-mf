@@ -277,7 +277,7 @@
         <div class="focus-control">
             <button id="focusModeBtn" disabled>AF</button>
             <input type="range" id="focusSlider" class="focus-slider"
-                   min="100" max="500" value="300" step="1" disabled>
+                   min="1" max="100" value="50" step="1" disabled>
             <span id="focusValue" class="focus-value">AUTO</span>
         </div>
 
@@ -312,9 +312,9 @@
             VIDEO_WIDTH: 1280,
             VIDEO_HEIGHT: 720,
 
-            // フォーカス設定（メートル単位）
-            FOCUS_MIN_M: 1.0,            // 100cm
-            FOCUS_MAX_M: 5.0,            // 500cm
+            // フォーカス設定（API値）
+            FOCUS_MIN_API: 1.0,          // API最小値
+            FOCUS_MAX_API: Infinity,     // API最大値（無限遠）
 
             // 録画設定
             VIDEO_FPS: 4,
@@ -355,6 +355,35 @@
                 state.elements.dbgFocusMax.textContent = '未サポート';
                 state.elements.dbgFocusStep.textContent = '未サポート';
             }
+        }
+
+        /**
+         * スライダー値（1〜100）をAPI値（1.0〜Infinity）に変換する
+         * 対数スケールで変換し、100の時はInfinityを返す
+         * @param {number} sliderValue - スライダーの値（1〜100）
+         * @returns {number} API値（focusDistance）
+         */
+        function sliderToApiValue(sliderValue) {
+            if (sliderValue >= 100) {
+                return Infinity;
+            }
+            // 対数スケール: 1→1.0, 50→10.0, 99→100.0
+            const t = (sliderValue - 1) / 98;
+            return Math.pow(10, t * 2);
+        }
+
+        /**
+         * API値をスライダー値に変換する（逆変換）
+         * @param {number} apiValue - API値（focusDistance）
+         * @returns {number} スライダーの値（1〜100）
+         */
+        function apiValueToSlider(apiValue) {
+            if (!isFinite(apiValue)) {
+                return 100;
+            }
+            // 対数スケールの逆変換
+            const t = Math.log10(apiValue) / 2;
+            return Math.round(t * 98 + 1);
         }
 
         /**
@@ -408,9 +437,7 @@
                 track: null,               // カメラのビデオトラック
                 focusSupported: false,     // フォーカス制御サポートフラグ
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
-                focusMode: 'continuous',   // フォーカスモード: 'continuous' or 'manual'
-                focusDistanceMin: CONFIG.FOCUS_MIN_M,  // フォーカス距離の最小値
-                focusDistanceMax: CONFIG.FOCUS_MAX_M   // フォーカス距離の最大値
+                focusMode: 'continuous'    // フォーカスモード: 'continuous' or 'manual'
             },
 
             // アニメーション関連
@@ -732,20 +759,6 @@
 
                 // マニュアルフォーカスのサポートを確認
                 state.camera.mfSupported = supportedModes.includes('manual');
-
-                if (state.camera.mfSupported && capabilities.focusDistance) {
-                    // カメラの能力を取得し、設定範囲内でクリップ
-                    const cameraMin = capabilities.focusDistance.min || 0;
-                    const cameraMax = capabilities.focusDistance.max || 2;
-                    state.camera.focusDistanceMin = Math.max(cameraMin, CONFIG.FOCUS_MIN_M);
-                    state.camera.focusDistanceMax = Math.min(cameraMax, CONFIG.FOCUS_MAX_M);
-                    debugLog(`フォーカス距離範囲: ${state.camera.focusDistanceMin}m - ${state.camera.focusDistanceMax}m`);
-
-                    // スライダーの範囲を設定（cmに変換）
-                    state.elements.focusSlider.min = Math.round(state.camera.focusDistanceMin * 100);
-                    state.elements.focusSlider.max = Math.round(state.camera.focusDistanceMax * 100);
-                    state.elements.focusSlider.value = Math.round((state.camera.focusDistanceMin + state.camera.focusDistanceMax) / 2 * 100);
-                }
 
                 // フォーカスUIを有効化
                 state.elements.focusModeBtn.disabled = false;
@@ -1287,14 +1300,14 @@
                 state.elements.focusSlider.disabled = false;
 
                 // 現在のスライダー値でフォーカスを設定
-                const sliderValue = state.elements.focusSlider.value;
-                const distance = sliderValue / 100;  // cmをmに変換
-                const displayValue = `${sliderValue}cm`;
-                await setFocusDistance(distance);
+                const sliderValue = parseInt(state.elements.focusSlider.value, 10);
+                const apiValue = sliderToApiValue(sliderValue);
+                const displayValue = String(sliderValue);
+                await setFocusDistance(apiValue);
                 state.elements.focusValue.textContent = displayValue;
 
                 // デバッグパネルを更新
-                updateDebugFocusValues(distance, sliderValue, displayValue);
+                updateDebugFocusValues(apiValue, sliderValue, displayValue);
 
                 debugLog('マニュアルフォーカスモードに切り替え');
             } else {
@@ -1318,15 +1331,15 @@
         async function handleFocusSliderChange(event) {
             if (state.camera.focusMode !== 'manual') return;
 
-            const value = event.target.value;
-            const distance = value / 100;  // cmをmに変換
-            const displayValue = `${value}cm`;
+            const sliderValue = parseInt(event.target.value, 10);
+            const apiValue = sliderToApiValue(sliderValue);
+            const displayValue = String(sliderValue);
 
             state.elements.focusValue.textContent = displayValue;
-            await setFocusDistance(distance);
+            await setFocusDistance(apiValue);
 
             // デバッグパネルを更新
-            updateDebugFocusValues(distance, value, displayValue);
+            updateDebugFocusValues(apiValue, sliderValue, displayValue);
         }
 
         /**
@@ -1348,26 +1361,20 @@
 
         /**
          * マニュアルフォーカスの距離を設定する
-         * @param {number} distance - フォーカス距離（メートル単位、0.02〜1.0）
+         * @param {number} apiValue - フォーカス距離（API値、1.0〜Infinity）
          * @returns {Promise<void>}
          */
-        async function setFocusDistance(distance) {
+        async function setFocusDistance(apiValue) {
             if (!state.camera.track) return;
-
-            // 距離を有効範囲内にクランプ
-            const clampedDistance = Math.max(
-                state.camera.focusDistanceMin,
-                Math.min(state.camera.focusDistanceMax, distance)
-            );
 
             try {
                 await state.camera.track.applyConstraints({
                     advanced: [{
                         focusMode: 'manual',
-                        focusDistance: clampedDistance
+                        focusDistance: apiValue
                     }]
                 });
-                debugLog(`フォーカス距離を設定: ${clampedDistance}m`);
+                debugLog(`フォーカス距離を設定: ${apiValue}`);
             } catch (error) {
                 console.error('フォーカス距離の設定に失敗:', error);
             }
