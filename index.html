@@ -1377,10 +1377,20 @@
 
             } else {
                 // MF → ∞ に切り替え
+                // 【教訓】確実にレンズを動かすため、近距離→遠距離の順で設定
                 debugLog('MF → ∞ モード切り替え開始');
 
+                const nearDistance = CONFIG.FOCUS_MIN_API;
                 const infinityValue = CONFIG.FOCUS_INFINITY_VALUE;
                 state.camera.targetFocusDistance = infinityValue;
+
+                // ステップ1: 近距離に設定してレンズを手前に動かす
+                debugLog(`  ステップ1: 近距離(${nearDistance})に設定`);
+                await setFocusDistance(nearDistance);
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // ステップ2: ∞に設定してレンズを奥に動かす
+                debugLog(`  ステップ2: ∞(${infinityValue})に設定`);
                 const success = await setFocusDistance(infinityValue);
 
                 // UIを更新
@@ -1416,7 +1426,13 @@
 
         /**
          * 初期フォーカス設定を適用する（video再生安定後に呼び出す）
-         * 強制適用ループ: 5秒間、500msごとにfocusMode: 'manual'を強制適用
+         *
+         * 【教訓を活かした実装】
+         * 1. advancedオプションでfocusModeとfocusDistanceを同時設定（必須）
+         * 2. 強制的なレンズ移動: 一度近距離に設定してから目標距離に設定
+         *    → これによりAFで合わせた位置から確実にレンズが動く
+         * 3. focusModeの検証のみ（focusDistance検証は無限ループの原因になるため避ける）
+         *
          * @returns {Promise<void>}
          */
         async function applyInitialFocus() {
@@ -1424,10 +1440,12 @@
 
             debugLog('========== 初期フォーカス強制適用開始 ==========');
 
-            const targetFocusDistance = CONFIG.FOCUS_INFINITY_VALUE; // ∞モード
-            state.camera.targetFocusDistance = targetFocusDistance;
-            const maxAttempts = 10;               // 最大10回試行
-            const intervalMs = 500;               // 500msごと
+            const nearDistance = CONFIG.FOCUS_MIN_API;  // 最近接（0.02）
+            const targetDistance = CONFIG.FOCUS_INFINITY_VALUE;  // ∞モード（5）
+            state.camera.targetFocusDistance = targetDistance;
+
+            const maxAttempts = 10;
+            const intervalMs = 500;
             let attempt = 0;
             let success = false;
 
@@ -1440,14 +1458,28 @@
                 const beforeSettings = state.camera.track.getSettings();
                 debugLog(`  適用前: focusMode=${beforeSettings.focusMode}, focusDistance=${beforeSettings.focusDistance}`);
 
-                // advancedオプションでfocusMode: 'manual'とfocusDistanceを同時に強制適用
                 try {
+                    // ステップ1: まず近距離に設定してレンズを手前に動かす
+                    debugLog(`  ステップ1: 近距離(${nearDistance})に設定`);
                     await state.camera.track.applyConstraints({
                         advanced: [{
                             focusMode: 'manual',
-                            focusDistance: targetFocusDistance
+                            focusDistance: nearDistance
                         }]
                     });
+
+                    // レンズが動くのを待つ
+                    await new Promise(resolve => setTimeout(resolve, 300));
+
+                    // ステップ2: 目標距離（∞）に設定してレンズを奥に動かす
+                    debugLog(`  ステップ2: 目標距離(${targetDistance})に設定`);
+                    await state.camera.track.applyConstraints({
+                        advanced: [{
+                            focusMode: 'manual',
+                            focusDistance: targetDistance
+                        }]
+                    });
+
                 } catch (e) {
                     debugLog(`  適用エラー: ${e.message}`);
                 }
@@ -1470,7 +1502,7 @@
                 debugLog('========== 初期フォーカス適用失敗（タイムアウト） ==========');
             }
 
-            updateDebugFocusValues(targetFocusDistance, '-', '∞');
+            updateDebugFocusValues(targetDistance, '-', '∞');
 
             // watchdog開始
             startFocusWatchdog();
