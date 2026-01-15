@@ -71,7 +71,7 @@
             padding: 20px;
             background: var(--color-overlay-dark);
             border-radius: 10px;
-            z-index: 200;  /* CONFIG.Z_INDEX_ERROR と同期 */
+            z-index: 200;
             display: none;
         }
 
@@ -86,7 +86,7 @@
             background: var(--color-overlay);
             padding: 20px 30px;
             border-radius: 16px;
-            z-index: 100;  /* CONFIG.Z_INDEX_UI と同期 */
+            z-index: 100;
         }
 
         /* ===== ボタン共通スタイル ===== */
@@ -250,10 +250,6 @@
             VIDEO_FPS: 4,
             VIDEO_QUALITY: 26,           // h264-mp4-encoder品質（10-51、低いほど高品質）
 
-            // UI設定（CSS側と同期が必要）
-            Z_INDEX_UI: 100,             // UIコンテナのz-index
-            Z_INDEX_ERROR: 200,          // エラーメッセージのz-index
-
             // タイミング設定
             FRAME_CAPTURE_DELAY_MS: 50   // フレームキャプチャ前の描画待機時間
         };
@@ -282,7 +278,6 @@
                 focusMode: 'infinity',     // UIフォーカスモード: 'infinity' | 'manual'
                 targetFocusDistance: 10,   // 目標focusDistance（初期値=∞モード用の10）
                 focusDistanceMin: 0.02,    // カメラのfocusDistance最小値
-                focusDistanceMax: Infinity,// カメラのfocusDistance最大値
                 watchdogId: null,          // フォーカス監視watchdogのインターバルID
                 focusDebounceTimer: null   // スライダーのデバウンスタイマー
             },
@@ -563,7 +558,6 @@
                 // カメラのfocusDistance範囲を保存
                 if (capabilities.focusDistance) {
                     state.camera.focusDistanceMin = capabilities.focusDistance.min || 0;
-                    state.camera.focusDistanceMax = capabilities.focusDistance.max || Infinity;
 
                     // スライダーの範囲を設定（実効範囲: 0.02〜5）
                     // 5以上は適用値が固定、10以上はInfinityになるため
@@ -1288,15 +1282,6 @@
             }, 2000);
         }
 
-        /**
-         * watchdog停止
-         */
-        function stopFocusWatchdog() {
-            if (state.camera.watchdogId) {
-                clearInterval(state.camera.watchdogId);
-                state.camera.watchdogId = null;
-            }
-        }
     </script>
 </body>
 </html>
