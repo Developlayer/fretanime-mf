@@ -1304,12 +1304,36 @@
         // =====================================================
 
         /**
+         * focusDistanceが正しく設定されたか検証
+         * ∞モード: 実際のfocusDistanceがInfinityであること
+         * MFモード: focusModeがmanualであること
+         */
+        function verifyFocusDistance(settings, targetDistance) {
+            if (settings.focusMode !== 'manual') {
+                return false;
+            }
+
+            // ∞モードの場合: focusDistanceがInfinityであることを確認
+            if (targetDistance >= CONFIG.FOCUS_INFINITY_VALUE) {
+                const isInfinity = !isFinite(settings.focusDistance);
+                debugLog(`∞モード検証: target=${targetDistance}, actual=${settings.focusDistance}, isInfinity=${isInfinity}`);
+                return isInfinity;
+            }
+
+            // MFモードの場合: focusModeがmanualなら成功とする
+            return true;
+        }
+
+        /**
          * カメラにフォーカス設定を適用する（複数の方法を試す）
          * @param {number} focusDistance - フォーカス距離
-         * @returns {Promise<boolean>} focusModeがmanualになったかどうか
+         * @returns {Promise<boolean>} focusModeがmanualかつfocusDistanceが正しいかどうか
          */
         async function applyFocusToCamera(focusDistance) {
             if (!state.camera.track) return false;
+
+            const isInfinityMode = focusDistance >= CONFIG.FOCUS_INFINITY_VALUE;
+            debugLog(`applyFocusToCamera開始: target=${focusDistance}, isInfinityMode=${isInfinityMode}`);
 
             // 方法1: 直接制約を指定
             try {
@@ -1317,13 +1341,14 @@
                     focusMode: 'manual',
                     focusDistance: focusDistance
                 });
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 100));
 
                 let settings = state.camera.track.getSettings();
-                if (settings.focusMode === 'manual') {
-                    debugLog(`applyFocus成功(直接): distance=${focusDistance}, actual=${settings.focusDistance}`);
+                if (verifyFocusDistance(settings, focusDistance)) {
+                    debugLog(`applyFocus成功(直接): actual=${settings.focusDistance}`);
                     return true;
                 }
+                debugLog(`applyFocus(直接): mode=${settings.focusMode}, distance=${settings.focusDistance} - 条件未達成`);
             } catch (e) {
                 debugLog(`applyFocus(直接)失敗: ${e.message}`);
             }
@@ -1333,28 +1358,34 @@
                 await state.camera.track.applyConstraints({
                     advanced: [{ focusMode: 'manual', focusDistance: focusDistance }]
                 });
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 100));
 
                 let settings = state.camera.track.getSettings();
-                if (settings.focusMode === 'manual') {
-                    debugLog(`applyFocus成功(advanced): distance=${focusDistance}, actual=${settings.focusDistance}`);
+                if (verifyFocusDistance(settings, focusDistance)) {
+                    debugLog(`applyFocus成功(advanced): actual=${settings.focusDistance}`);
                     return true;
                 }
+                debugLog(`applyFocus(advanced): mode=${settings.focusMode}, distance=${settings.focusDistance} - 条件未達成`);
             } catch (e) {
                 debugLog(`applyFocus(advanced)失敗: ${e.message}`);
             }
 
-            // 方法3: focusModeだけを先に設定
+            // 方法3: focusModeを先に設定、その後focusDistanceを複数回設定
             try {
                 await state.camera.track.applyConstraints({ focusMode: 'manual' });
-                await new Promise(r => setTimeout(r, 50));
-                await state.camera.track.applyConstraints({ focusDistance: focusDistance });
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 100));
 
-                let settings = state.camera.track.getSettings();
-                if (settings.focusMode === 'manual') {
-                    debugLog(`applyFocus成功(分離): distance=${focusDistance}, actual=${settings.focusDistance}`);
-                    return true;
+                // focusDistanceを最大5回設定してみる
+                for (let j = 0; j < 5; j++) {
+                    await state.camera.track.applyConstraints({ focusDistance: focusDistance });
+                    await new Promise(r => setTimeout(r, 100));
+
+                    let settings = state.camera.track.getSettings();
+                    if (verifyFocusDistance(settings, focusDistance)) {
+                        debugLog(`applyFocus成功(分離, ${j + 1}回目): actual=${settings.focusDistance}`);
+                        return true;
+                    }
+                    debugLog(`applyFocus(分離, ${j + 1}回目): distance=${settings.focusDistance} - リトライ`);
                 }
             } catch (e) {
                 debugLog(`applyFocus(分離)失敗: ${e.message}`);
@@ -1500,10 +1531,11 @@
                     return;
                 }
 
-                // 問題2: ∞モードなのにfocusDistanceがInfinityでない（10未満）
+                // 問題2: ∞モードなのにfocusDistanceがInfinityでない
                 if (state.camera.focusMode === 'infinity') {
-                    if (isFinite(settings.focusDistance) && settings.focusDistance < 8) {
-                        console.warn(`watchdog修復: ∞モードなのにdistance=${settings.focusDistance}`);
+                    // ∞モードではfocusDistanceがInfinityであるべき
+                    if (isFinite(settings.focusDistance)) {
+                        console.warn(`watchdog修復: ∞モードなのにdistance=${settings.focusDistance}（Infinityであるべき）`);
                         await applyFocusToCamera(target);
                     }
                 }
