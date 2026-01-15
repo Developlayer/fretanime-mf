@@ -75,6 +75,41 @@
             display: none;
         }
 
+        /* ===== 設定中オーバーレイ ===== */
+        #focusSettingOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 150;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+
+        #focusSettingOverlay.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        #focusSettingOverlay .setting-text {
+            color: white;
+            font-size: 72px;
+            font-weight: bold;
+            text-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         /* ===== UIオーバーレイ（右上） ===== */
         .ui-container {
             position: fixed;
@@ -243,6 +278,11 @@
 
     <!-- エラーメッセージ -->
     <div id="errorMessage"></div>
+
+    <!-- 設定中オーバーレイ -->
+    <div id="focusSettingOverlay">
+        <span class="setting-text">設定中...</span>
+    </div>
 
     <!-- デバッグパネル（キャリブレーション用） -->
     <div id="debugPanel" class="debug-panel">
@@ -453,6 +493,7 @@
             state.elements.focusModeBtn = document.getElementById('focusModeBtn');
             state.elements.focusSlider = document.getElementById('focusSlider');
             state.elements.errorMessage = document.getElementById('errorMessage');
+            state.elements.focusSettingOverlay = document.getElementById('focusSettingOverlay');
             state.elements.gridButtons = document.querySelectorAll('.grid-buttons button');
 
             // デバッグパネル要素
@@ -1304,6 +1345,24 @@
         // =====================================================
 
         /**
+         * 「設定中」オーバーレイを表示
+         */
+        function showFocusSettingOverlay() {
+            if (state.elements.focusSettingOverlay) {
+                state.elements.focusSettingOverlay.classList.add('visible');
+            }
+        }
+
+        /**
+         * 「設定中」オーバーレイを非表示
+         */
+        function hideFocusSettingOverlay() {
+            if (state.elements.focusSettingOverlay) {
+                state.elements.focusSettingOverlay.classList.remove('visible');
+            }
+        }
+
+        /**
          * focusDistanceが正しく設定されたか検証
          * ∞モード: 実際のfocusDistanceがInfinityであること
          * MFモード: focusModeがmanualであること
@@ -1402,6 +1461,9 @@
         async function toggleFocusMode() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
+            // 設定中オーバーレイを表示
+            showFocusSettingOverlay();
+
             if (state.camera.focusMode === 'infinity') {
                 // ∞ → MF に切り替え
                 const apiValue = parseFloat(state.elements.focusSlider.value);
@@ -1446,6 +1508,9 @@
                 // デバッグパネル更新
                 updateDebugFocusValues(infinityValue, '-', '∞');
             }
+
+            // 設定中オーバーレイを非表示
+            hideFocusSettingOverlay();
         }
 
         /**
@@ -1481,6 +1546,9 @@
 
             debugLog('===== 初期フォーカス設定開始 =====');
 
+            // 設定中オーバーレイを表示
+            showFocusSettingOverlay();
+
             const infinityValue = CONFIG.FOCUS_INFINITY_VALUE; // 10
             state.camera.targetFocusDistance = infinityValue;
 
@@ -1497,6 +1565,9 @@
                     await new Promise(r => setTimeout(r, 300));
                 }
             }
+
+            // 設定中オーバーレイを非表示
+            hideFocusSettingOverlay();
 
             if (success) {
                 debugLog('★★★ 初期フォーカス設定成功 ★★★');
