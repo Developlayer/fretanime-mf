@@ -438,7 +438,7 @@
                 track: null,               // カメラのビデオトラック
                 focusSupported: false,     // フォーカス制御サポートフラグ
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
-                focusMode: 'infinity',     // フォーカスモード: 'continuous' | 'manual' | 'infinity'
+                focusMode: 'infinity',     // フォーカスモード: 'infinity' | 'manual'
                 focusDistanceMin: 0,       // カメラのfocusDistance最小値
                 focusDistanceMax: Infinity // カメラのfocusDistance最大値
             },
@@ -1310,37 +1310,13 @@
             debugLog('ファイル保存:', filename);
         }
 
-        // ===== フォーカスモードの切り替え（∞ → AF → MF → ∞） =====
+        // ===== フォーカスモードの切り替え（∞ ↔ MF） =====
         async function toggleFocusMode() {
-            if (!state.camera.focusSupported) return;
+            if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
             if (state.camera.focusMode === 'infinity') {
-                // ∞ → AF に切り替え
-                debugLog('∞ → AF モード切り替え開始');
-
-                const success = await setAutoFocus();
-
-                // UIを更新
-                state.camera.focusMode = 'continuous';
-                state.elements.focusModeBtn.textContent = 'AF';
-                state.elements.focusModeBtn.classList.remove('active');
-                state.elements.focusSlider.disabled = true;
-
-                // 最終確認
-                const settings = state.camera.track.getSettings();
-                debugLog(`AFモード切り替え完了: success=${success}, 実際のfocusMode=${settings.focusMode}`);
-
-                // デバッグパネルを更新（AFモード）
-                updateDebugFocusValues('AUTO', '-', 'AF');
-
-            } else if (state.camera.focusMode === 'continuous') {
-                // AF → MF に切り替え
-                if (!state.camera.mfSupported) {
-                    debugLog('マニュアルフォーカスは未サポート');
-                    return;
-                }
-
-                debugLog('AF → MF モード切り替え開始');
+                // ∞ → MF に切り替え
+                debugLog('∞ → MF モード切り替え開始');
 
                 // 現在のスライダー値でフォーカスを設定
                 const apiValue = parseFloat(state.elements.focusSlider.value);
@@ -1349,7 +1325,6 @@
                 // UIを更新
                 state.camera.focusMode = 'manual';
                 state.elements.focusModeBtn.textContent = 'MF';
-                state.elements.focusModeBtn.classList.add('active');
                 state.elements.focusSlider.disabled = false;
 
                 // 最終確認
@@ -1368,7 +1343,6 @@
                 // UIを更新
                 state.camera.focusMode = 'infinity';
                 state.elements.focusModeBtn.textContent = '∞';
-                state.elements.focusModeBtn.classList.add('active');
                 state.elements.focusSlider.disabled = true;
 
                 // 最終確認
@@ -1440,47 +1414,6 @@
 
             updateDebugFocusValues(Infinity, '-', '∞');
             debugLog('初期フォーカス設定完了');
-        }
-
-        /**
-         * オートフォーカス（連続AF）モードを設定する（リトライ付き）
-         * @returns {Promise<boolean>} 設定が成功したかどうか
-         */
-        async function setAutoFocus() {
-            if (!state.camera.track) return false;
-
-            debugLog('setAutoFocus呼び出し');
-
-            // 最大3回リトライ
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    await state.camera.track.applyConstraints({
-                        advanced: [{ focusMode: 'continuous' }]
-                    });
-
-                    // 設定が反映されるまで待機
-                    await new Promise(resolve => setTimeout(resolve, 100));
-
-                    // 設定後の実際の値を確認
-                    const settings = state.camera.track.getSettings();
-                    debugLog(`AF設定試行${attempt + 1}: 適用focusMode=${settings.focusMode}`);
-
-                    if (settings.focusMode === 'continuous') {
-                        debugLog(`setAutoFocus成功（${attempt + 1}回目）`);
-                        return true;
-                    }
-
-                    debugLog(`focusModeがcontinuousでないため再試行...（${attempt + 1}回目失敗）`);
-                    await new Promise(resolve => setTimeout(resolve, 150));
-
-                } catch (error) {
-                    console.error(`AF設定エラー（${attempt + 1}回目）:`, error);
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-            }
-
-            console.warn('setAutoFocus: 3回試行しても設定が反映されませんでした');
-            return false;
         }
 
         /**
