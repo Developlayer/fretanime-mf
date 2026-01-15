@@ -351,35 +351,6 @@
         }
 
         /**
-         * スライダー値（1〜100）をAPI値（1.0〜Infinity）に変換する
-         * 対数スケールで変換し、100の時はInfinityを返す
-         * @param {number} sliderValue - スライダーの値（1〜100）
-         * @returns {number} API値（focusDistance）
-         */
-        function sliderToApiValue(sliderValue) {
-            if (sliderValue >= 100) {
-                return Infinity;
-            }
-            // 対数スケール: 1→1.0, 50→10.0, 99→100.0
-            const t = (sliderValue - 1) / 98;
-            return Math.pow(10, t * 2);
-        }
-
-        /**
-         * API値をスライダー値に変換する（逆変換）
-         * @param {number} apiValue - API値（focusDistance）
-         * @returns {number} スライダーの値（1〜100）
-         */
-        function apiValueToSlider(apiValue) {
-            if (!isFinite(apiValue)) {
-                return 100;
-            }
-            // 対数スケールの逆変換
-            const t = Math.log10(apiValue) / 2;
-            return Math.round(t * 98 + 1);
-        }
-
-        /**
          * デバッグパネルにフォーカス値を表示する
          * @param {number|string} setValue - 設定しようとしている値
          * @param {number|string} sliderValue - スライダーのUI値
@@ -440,7 +411,8 @@
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
                 focusMode: 'infinity',     // フォーカスモード: 'infinity' | 'manual'
                 focusDistanceMin: 0,       // カメラのfocusDistance最小値
-                focusDistanceMax: Infinity // カメラのfocusDistance最大値
+                focusDistanceMax: Infinity,// カメラのfocusDistance最大値
+                watchdogId: null           // フォーカス監視watchdogのインターバルID
             },
 
             // アニメーション関連
@@ -686,48 +658,68 @@
             state.elements.video.srcObject = stream;
             debugLog('ストリームをvideo要素に接続');
 
-            // 再生を開始
-            await playVideoWithRetry();
+            // 再生を開始し、完全に安定するまで待つ
+            await playVideoAndWaitForStable();
 
             // デバッグ用：状態確認
             scheduleVideoStateCheck();
         }
 
-        // ===== video再生（リトライ付き） =====
-        async function playVideoWithRetry() {
-            const playVideo = async () => {
-                try {
-                    const playPromise = state.elements.video.play();
-                    if (playPromise !== undefined) {
-                        await playPromise;
-                        debugLog('video.play() 成功');
-                    }
-                } catch (playError) {
-                    console.error('video.play() 失敗:', playError);
-                    // play()が失敗した場合、ユーザーインタラクション後に再試行
-                    const retryPlay = async () => {
-                        try {
-                            await state.elements.video.play();
-                            debugLog('ユーザークリック後のplay()成功');
-                        } catch (e) {
-                            console.error('クリック後のplay()も失敗:', e);
-                        }
-                    };
-                    document.body.addEventListener('click', retryPlay, { once: true });
-                    document.body.addEventListener('touchstart', retryPlay, { once: true });
-                }
-            };
+        /**
+         * video再生を開始し、完全に安定するまで待つ
+         * @returns {Promise<void>}
+         */
+        async function playVideoAndWaitForStable() {
+            return new Promise((resolve) => {
+                const video = state.elements.video;
 
-            // loadedmetadataイベントで再生開始
-            if (state.elements.video.readyState >= 1) {
-                debugLog('メタデータ読み込み済み、play()を呼び出し');
-                await playVideo();
-            } else {
-                state.elements.video.addEventListener('loadedmetadata', async () => {
-                    debugLog('loadedmetadata イベント発火');
-                    await playVideo();
-                }, { once: true });
-            }
+                // onplayingイベントで再生開始を検知
+                const onPlaying = () => {
+                    debugLog('video.onplaying イベント発火');
+                    video.removeEventListener('playing', onPlaying);
+
+                    // 追加で2秒待機してカメラを完全に安定させる
+                    debugLog('カメラ安定化のため2秒待機...');
+                    setTimeout(() => {
+                        debugLog(`video安定確認: readyState=${video.readyState}, size=${video.videoWidth}x${video.videoHeight}`);
+                        resolve();
+                    }, 2000);
+                };
+
+                video.addEventListener('playing', onPlaying);
+
+                // 再生を試みる
+                const tryPlay = async () => {
+                    try {
+                        await video.play();
+                        debugLog('video.play() 成功');
+                    } catch (playError) {
+                        console.error('video.play() 失敗:', playError);
+                        // ユーザーインタラクション後に再試行
+                        const retryPlay = async () => {
+                            try {
+                                await video.play();
+                                debugLog('ユーザークリック後のplay()成功');
+                            } catch (e) {
+                                console.error('クリック後のplay()も失敗:', e);
+                            }
+                        };
+                        document.body.addEventListener('click', retryPlay, { once: true });
+                        document.body.addEventListener('touchstart', retryPlay, { once: true });
+                    }
+                };
+
+                // メタデータ読み込み完了を待ってから再生
+                if (video.readyState >= 1) {
+                    debugLog('メタデータ読み込み済み、play()を呼び出し');
+                    tryPlay();
+                } else {
+                    video.addEventListener('loadedmetadata', () => {
+                        debugLog('loadedmetadata イベント発火');
+                        tryPlay();
+                    }, { once: true });
+                }
+            });
         }
 
         // ===== デバッグ用：video状態確認をスケジュール =====
@@ -1366,54 +1358,123 @@
         }
 
         /**
-         * 初期フォーカス設定を適用する（video再生開始後に呼び出す）
+         * 初期フォーカス設定を適用する（video再生安定後に呼び出す）
+         * 強制適用ループ: 5秒間、500msごとにfocusMode: 'manual'を強制適用
          * @returns {Promise<void>}
          */
         async function applyInitialFocus() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
-            debugLog('初期フォーカス設定を適用中...');
+            debugLog('========== 初期フォーカス強制適用開始 ==========');
 
-            // カメラの準備完了を待つ（videoが再生開始してから少し待つ）
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // ∞モードを適用（リトライ付き、段階的に待機時間を増やす）
+            const targetFocusDistance = Infinity; // ∞モード
+            const maxAttempts = 10;               // 最大10回試行
+            const intervalMs = 500;               // 500msごと
+            let attempt = 0;
             let success = false;
-            const maxRetries = 5;
-            for (let i = 0; i < maxRetries && !success; i++) {
-                debugLog(`初期フォーカス設定試行 ${i + 1}/${maxRetries}`);
 
-                // focusModeとfocusDistanceを同時に設定
+            // 強制適用ループ
+            while (attempt < maxAttempts && !success) {
+                attempt++;
+                debugLog(`強制適用試行 ${attempt}/${maxAttempts}`);
+
+                // 現在の状態を確認
+                const beforeSettings = state.camera.track.getSettings();
+                debugLog(`  適用前: focusMode=${beforeSettings.focusMode}, focusDistance=${beforeSettings.focusDistance}`);
+
+                // focusMode: 'manual' を強制適用
                 try {
                     await state.camera.track.applyConstraints({
                         advanced: [{
                             focusMode: 'manual',
-                            focusDistance: Infinity
+                            focusDistance: targetFocusDistance
                         }]
                     });
                 } catch (e) {
-                    debugLog(`applyConstraints失敗: ${e.message}`);
+                    debugLog(`  applyConstraints エラー: ${e.message}`);
                 }
 
-                // 設定が反映されるまで待機（段階的に増やす）
-                const waitTime = 200 + (i * 200);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
+                // 設定反映を待つ
+                await new Promise(resolve => setTimeout(resolve, 200));
 
-                const settings = state.camera.track.getSettings();
-                if (settings.focusMode === 'manual') {
+                // 結果を確認
+                const afterSettings = state.camera.track.getSettings();
+                debugLog(`  適用後: focusMode=${afterSettings.focusMode}, focusDistance=${afterSettings.focusDistance}`);
+
+                if (afterSettings.focusMode === 'manual') {
                     success = true;
-                    debugLog(`初期フォーカス設定成功（${i + 1}回目, ${waitTime}ms待機後）: focusDistance=${settings.focusDistance}`);
+                    debugLog(`★★★ 強制適用成功！（${attempt}回目）★★★`);
                 } else {
-                    debugLog(`初期フォーカス設定失敗（${i + 1}回目）: focusMode=${settings.focusMode}, focusDistance=${settings.focusDistance}`);
+                    debugLog(`  まだcontinuousのため再試行...`);
+                    await new Promise(resolve => setTimeout(resolve, intervalMs - 200));
                 }
             }
 
             if (!success) {
-                console.warn('初期フォーカス設定が反映されませんでした');
+                console.error('!!!!! 初期フォーカス設定が10回試行しても反映されませんでした !!!!!');
             }
 
-            updateDebugFocusValues(Infinity, '-', '∞');
-            debugLog('初期フォーカス設定完了');
+            updateDebugFocusValues(targetFocusDistance, '-', '∞');
+            debugLog('========== 初期フォーカス強制適用完了 ==========');
+
+            // Phase 3: watchdogを開始
+            startFocusWatchdog();
+        }
+
+        /**
+         * フォーカス監視watchdogを開始する
+         * 1秒ごとにfocusModeを監視し、continuousなら即座にmanualに戻す
+         */
+        function startFocusWatchdog() {
+            debugLog('フォーカスwatchdog開始');
+
+            // watchdogインターバルを保存（後で停止できるように）
+            state.camera.watchdogId = setInterval(async () => {
+                if (!state.camera.track) return;
+
+                const settings = state.camera.track.getSettings();
+
+                // continuousを検出したら自動修復
+                if (settings.focusMode === 'continuous') {
+                    console.warn('!!! watchdog: continuousを検出、manualに修復します !!!');
+
+                    // 現在のUIモードに応じたfocusDistanceを決定
+                    const targetDistance = state.camera.focusMode === 'infinity'
+                        ? Infinity
+                        : parseFloat(state.elements.focusSlider.value);
+
+                    try {
+                        await state.camera.track.applyConstraints({
+                            advanced: [{
+                                focusMode: 'manual',
+                                focusDistance: targetDistance
+                            }]
+                        });
+
+                        // 修復確認
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        const newSettings = state.camera.track.getSettings();
+                        if (newSettings.focusMode === 'manual') {
+                            debugLog('watchdog: 修復成功！');
+                        } else {
+                            debugLog('watchdog: 修復失敗、次回再試行');
+                        }
+                    } catch (e) {
+                        console.error('watchdog: 修復エラー:', e);
+                    }
+                }
+            }, 1000); // 1秒ごとに監視
+        }
+
+        /**
+         * フォーカス監視watchdogを停止する
+         */
+        function stopFocusWatchdog() {
+            if (state.camera.watchdogId) {
+                clearInterval(state.camera.watchdogId);
+                state.camera.watchdogId = null;
+                debugLog('フォーカスwatchdog停止');
+            }
         }
 
         /**
