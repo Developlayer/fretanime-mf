@@ -195,6 +195,50 @@
             display: flex;
             gap: 10px;
         }
+
+        /* ===== デバッグパネル（キャリブレーション用） ===== */
+        .debug-panel {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: var(--color-overlay-dark);
+            padding: 16px 20px;
+            border-radius: 12px;
+            z-index: 100;
+            font-family: monospace;
+            font-size: 14px;
+            color: var(--color-text);
+            line-height: 1.6;
+            display: none;  /* CONFIG.DEBUGで制御 */
+        }
+
+        .debug-panel.visible {
+            display: block;
+        }
+
+        .debug-panel h3 {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .debug-panel .section {
+            margin-bottom: 12px;
+        }
+
+        .debug-panel .section:last-child {
+            margin-bottom: 0;
+        }
+
+        .debug-panel .value {
+            color: #4fc3f7;
+        }
+
+        .debug-panel .label {
+            color: var(--color-text-muted);
+        }
     </style>
 </head>
 <body>
@@ -206,6 +250,26 @@
 
     <!-- エラーメッセージ -->
     <div id="errorMessage"></div>
+
+    <!-- デバッグパネル（キャリブレーション用） -->
+    <div id="debugPanel" class="debug-panel">
+        <div class="section">
+            <h3>カメラ能力</h3>
+            <div><span class="label">focusDistance.min:</span> <span id="dbgFocusMin" class="value">-</span></div>
+            <div><span class="label">focusDistance.max:</span> <span id="dbgFocusMax" class="value">-</span></div>
+            <div><span class="label">focusDistance.step:</span> <span id="dbgFocusStep" class="value">-</span></div>
+        </div>
+        <div class="section">
+            <h3>現在のAPI値</h3>
+            <div><span class="label">設定値:</span> <span id="dbgFocusSet" class="value">-</span></div>
+            <div><span class="label">適用値:</span> <span id="dbgFocusActual" class="value">-</span></div>
+        </div>
+        <div class="section">
+            <h3>UI値</h3>
+            <div><span class="label">スライダー:</span> <span id="dbgSliderValue" class="value">-</span></div>
+            <div><span class="label">表示:</span> <span id="dbgDisplayValue" class="value">-</span></div>
+        </div>
+    </div>
 
     <!-- UIオーバーレイ（右上） -->
     <div class="ui-container">
@@ -264,14 +328,52 @@
             FRAME_CAPTURE_DELAY_MS: 50,  // フレームキャプチャ前の描画待機時間
             DEBUG_CHECK_INTERVALS_MS: [1000, 3000, 5000],  // デバッグ用状態確認タイミング
 
-            // デバッグモード
-            DEBUG: false
+            // デバッグモード（キャリブレーション時はtrue）
+            DEBUG: true
         };
 
         // ===== デバッグログ出力 =====
         function debugLog(...args) {
             if (CONFIG.DEBUG) {
                 console.log(...args);
+            }
+        }
+
+        /**
+         * デバッグパネルにカメラ能力を表示する
+         * @param {MediaTrackCapabilities} capabilities - カメラの能力情報
+         */
+        function updateDebugCapabilities(capabilities) {
+            if (!CONFIG.DEBUG) return;
+
+            if (capabilities.focusDistance) {
+                state.elements.dbgFocusMin.textContent = capabilities.focusDistance.min ?? '-';
+                state.elements.dbgFocusMax.textContent = capabilities.focusDistance.max ?? '-';
+                state.elements.dbgFocusStep.textContent = capabilities.focusDistance.step ?? '-';
+            } else {
+                state.elements.dbgFocusMin.textContent = '未サポート';
+                state.elements.dbgFocusMax.textContent = '未サポート';
+                state.elements.dbgFocusStep.textContent = '未サポート';
+            }
+        }
+
+        /**
+         * デバッグパネルにフォーカス値を表示する
+         * @param {number|string} setValue - 設定しようとしている値
+         * @param {number|string} sliderValue - スライダーのUI値
+         * @param {string} displayValue - 画面に表示する値
+         */
+        function updateDebugFocusValues(setValue, sliderValue, displayValue) {
+            if (!CONFIG.DEBUG) return;
+
+            state.elements.dbgFocusSet.textContent = setValue;
+            state.elements.dbgSliderValue.textContent = sliderValue;
+            state.elements.dbgDisplayValue.textContent = displayValue;
+
+            // 実際に適用された値をgetSettings()から取得
+            if (state.camera.track) {
+                const settings = state.camera.track.getSettings();
+                state.elements.dbgFocusActual.textContent = settings.focusDistance ?? '-';
             }
         }
 
@@ -289,7 +391,16 @@
                 focusSlider: null,         // フォーカススライダー
                 focusValue: null,          // フォーカス値表示
                 errorMessage: null,        // エラーメッセージ
-                gridButtons: null          // グリッドボタン配列
+                gridButtons: null,         // グリッドボタン配列
+                // デバッグパネル
+                debugPanel: null,          // デバッグパネル本体
+                dbgFocusMin: null,         // focusDistance.min表示
+                dbgFocusMax: null,         // focusDistance.max表示
+                dbgFocusStep: null,        // focusDistance.step表示
+                dbgFocusSet: null,         // 設定値表示
+                dbgFocusActual: null,      // 適用値表示
+                dbgSliderValue: null,      // スライダー値表示
+                dbgDisplayValue: null      // 表示値
             },
 
             // カメラ関連
@@ -338,6 +449,21 @@
             state.elements.focusValue = document.getElementById('focusValue');
             state.elements.errorMessage = document.getElementById('errorMessage');
             state.elements.gridButtons = document.querySelectorAll('.grid-buttons button');
+
+            // デバッグパネル要素
+            state.elements.debugPanel = document.getElementById('debugPanel');
+            state.elements.dbgFocusMin = document.getElementById('dbgFocusMin');
+            state.elements.dbgFocusMax = document.getElementById('dbgFocusMax');
+            state.elements.dbgFocusStep = document.getElementById('dbgFocusStep');
+            state.elements.dbgFocusSet = document.getElementById('dbgFocusSet');
+            state.elements.dbgFocusActual = document.getElementById('dbgFocusActual');
+            state.elements.dbgSliderValue = document.getElementById('dbgSliderValue');
+            state.elements.dbgDisplayValue = document.getElementById('dbgDisplayValue');
+
+            // デバッグモード時はデバッグパネルを表示
+            if (CONFIG.DEBUG) {
+                state.elements.debugPanel.classList.add('visible');
+            }
 
             // Canvasサイズの初期設定
             resizeCanvas();
@@ -594,6 +720,9 @@
 
             const capabilities = state.camera.track.getCapabilities();
             debugLog('カメラの能力:', capabilities);
+
+            // デバッグパネルにカメラ能力を表示
+            updateDebugCapabilities(capabilities);
 
             // フォーカス制御のサポートを確認
             if (capabilities.focusMode) {
@@ -1158,9 +1287,14 @@
                 state.elements.focusSlider.disabled = false;
 
                 // 現在のスライダー値でフォーカスを設定
-                const distance = state.elements.focusSlider.value / 100;  // cmをmに変換
+                const sliderValue = state.elements.focusSlider.value;
+                const distance = sliderValue / 100;  // cmをmに変換
+                const displayValue = `${sliderValue}cm`;
                 await setFocusDistance(distance);
-                state.elements.focusValue.textContent = `${state.elements.focusSlider.value}cm`;
+                state.elements.focusValue.textContent = displayValue;
+
+                // デバッグパネルを更新
+                updateDebugFocusValues(distance, sliderValue, displayValue);
 
                 debugLog('マニュアルフォーカスモードに切り替え');
             } else {
@@ -1172,6 +1306,10 @@
                 state.elements.focusValue.textContent = 'AUTO';
 
                 await setAutoFocus();
+
+                // デバッグパネルを更新（AFモード）
+                updateDebugFocusValues('AUTO', '-', 'AUTO');
+
                 debugLog('オートフォーカスモードに切り替え');
             }
         }
@@ -1182,9 +1320,13 @@
 
             const value = event.target.value;
             const distance = value / 100;  // cmをmに変換
+            const displayValue = `${value}cm`;
 
-            state.elements.focusValue.textContent = `${value}cm`;
+            state.elements.focusValue.textContent = displayValue;
             await setFocusDistance(distance);
+
+            // デバッグパネルを更新
+            updateDebugFocusValues(distance, value, displayValue);
         }
 
         /**
