@@ -75,41 +75,6 @@
             display: none;
         }
 
-        /* ===== 設定中オーバーレイ ===== */
-        #focusSettingOverlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: rgba(0, 0, 0, 0.6);
-            z-index: 150;
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.2s, visibility 0.2s;
-        }
-
-        #focusSettingOverlay.visible {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        #focusSettingOverlay .setting-text {
-            color: white;
-            font-size: 72px;
-            font-weight: bold;
-            text-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
-            animation: pulse 1s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
-
         /* ===== UIオーバーレイ（右上） ===== */
         .ui-container {
             position: fixed;
@@ -278,11 +243,6 @@
 
     <!-- エラーメッセージ -->
     <div id="errorMessage"></div>
-
-    <!-- 設定中オーバーレイ -->
-    <div id="focusSettingOverlay">
-        <span class="setting-text">設定中...</span>
-    </div>
 
     <!-- デバッグパネル（キャリブレーション用） -->
     <div id="debugPanel" class="debug-panel">
@@ -492,7 +452,6 @@
             state.elements.focusModeBtn = document.getElementById('focusModeBtn');
             state.elements.focusSlider = document.getElementById('focusSlider');
             state.elements.errorMessage = document.getElementById('errorMessage');
-            state.elements.focusSettingOverlay = document.getElementById('focusSettingOverlay');
             state.elements.gridButtons = document.querySelectorAll('.grid-buttons button');
 
             // デバッグパネル要素
@@ -1341,102 +1300,25 @@
         }
 
         // =====================================================
-        // フォーカス制御（徹底修正版）
+        // フォーカス制御
         // =====================================================
 
         /**
-         * 「設定中」オーバーレイを表示
+         * カメラにフォーカス設定を適用する（シンプル版）
          */
-        function showFocusSettingOverlay() {
-            if (state.elements.focusSettingOverlay) {
-                state.elements.focusSettingOverlay.classList.add('visible');
-            }
-        }
-
-        /**
-         * 「設定中」オーバーレイを非表示
-         */
-        function hideFocusSettingOverlay() {
-            if (state.elements.focusSettingOverlay) {
-                state.elements.focusSettingOverlay.classList.remove('visible');
-            }
-        }
-
-        /**
-         * ∞モードのフォーカス設定が成功したか検証
-         * 条件: focusMode === 'manual' かつ (focusDistance >= 5 または Infinity)
-         */
-        function verifyInfinityFocus(settings) {
-            if (settings.focusMode !== 'manual') {
-                debugLog(`∞検証失敗: focusMode=${settings.focusMode} (manualではない)`);
-                return false;
-            }
-
-            const distance = settings.focusDistance;
-            // Infinityまたは5以上なら成功
-            const isFarEnough = !isFinite(distance) || distance >= CONFIG.FOCUS_MAX_API;
-            debugLog(`∞検証: mode=${settings.focusMode}, distance=${distance}, isFarEnough=${isFarEnough}`);
-            return isFarEnough;
-        }
-
-        /**
-         * MFモードのフォーカス設定が成功したか検証
-         * 条件: focusMode === 'manual'
-         */
-        function verifyManualFocus(settings) {
-            const isManual = settings.focusMode === 'manual';
-            debugLog(`MF検証: mode=${settings.focusMode}, distance=${settings.focusDistance}, isManual=${isManual}`);
-            return isManual;
-        }
-
-        /**
-         * カメラにフォーカス設定を適用する
-         * @param {number} targetDistance - 目標フォーカス距離
-         * @param {boolean} isInfinityMode - ∞モードかどうか
-         * @returns {Promise<boolean>} 設定が成功したかどうか
-         */
-        async function applyFocusToCamera(targetDistance, isInfinityMode = false) {
-            if (!state.camera.track) return false;
-
-            debugLog(`applyFocus: target=${targetDistance}, isInfinity=${isInfinityMode}`);
+        async function applyFocusToCamera(targetDistance) {
+            if (!state.camera.track) return;
 
             try {
-                // Step 1: focusModeをmanualに設定
+                // focusModeをmanualに設定
                 await state.camera.track.applyConstraints({ focusMode: 'manual' });
-                await new Promise(r => setTimeout(r, 100));
 
-                let settings = state.camera.track.getSettings();
-                if (settings.focusMode !== 'manual') {
-                    debugLog(`focusModeがmanualにならない: ${settings.focusMode}`);
-                    return false;
-                }
+                // focusDistanceを設定
+                await state.camera.track.applyConstraints({ focusDistance: targetDistance });
 
-                // ∞モードの場合: 近距離→遠距離の順で設定（レンズを確実に動かす）
-                if (isInfinityMode) {
-                    // 近距離に設定
-                    await state.camera.track.applyConstraints({ focusDistance: 0.1 });
-                    await new Promise(r => setTimeout(r, 200));
-
-                    // 遠距離に設定
-                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
-                    await new Promise(r => setTimeout(r, 200));
-                }
-
-                // MFモードの場合: 直接目標値を設定
-                if (!isInfinityMode) {
-                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
-                    await new Promise(r => setTimeout(r, 100));
-                }
-
-                // 最終確認（focusModeがmanualならOK）
-                settings = state.camera.track.getSettings();
-                debugLog(`設定後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
-
-                return settings.focusMode === 'manual';
-
+                debugLog(`フォーカス設定: distance=${targetDistance}`);
             } catch (e) {
-                debugLog(`applyFocusエラー: ${e.message}`);
-                return false;
+                debugLog(`フォーカス設定エラー: ${e.message}`);
             }
         }
 
@@ -1446,56 +1328,34 @@
         async function toggleFocusMode() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
-            // 設定中オーバーレイを表示
-            showFocusSettingOverlay();
-
             if (state.camera.focusMode === 'infinity') {
                 // ∞ → MF に切り替え
                 const apiValue = parseFloat(state.elements.focusSlider.value);
                 state.camera.targetFocusDistance = apiValue;
                 state.camera.focusMode = 'manual';
 
-                debugLog(`モード切替: ∞ → MF (target=${apiValue})`);
-
-                // UIを更新
                 state.elements.focusModeBtn.textContent = 'MF';
                 state.elements.focusSlider.disabled = false;
 
-                // カメラに適用（MFモード）
-                for (let i = 0; i < 3; i++) {
-                    const success = await applyFocusToCamera(apiValue, false);
-                    if (success) break;
-                    await new Promise(r => setTimeout(r, 100));
-                }
-
-                // デバッグパネル更新
+                await applyFocusToCamera(apiValue);
                 updateDebugFocusValues(apiValue, apiValue, 'MF');
 
             } else {
                 // MF → ∞ に切り替え
-                const infinityValue = CONFIG.FOCUS_INFINITY_VALUE; // 10
+                const infinityValue = CONFIG.FOCUS_INFINITY_VALUE;
                 state.camera.targetFocusDistance = infinityValue;
                 state.camera.focusMode = 'infinity';
 
-                debugLog(`モード切替: MF → ∞ (target=${infinityValue})`);
-
-                // UIを更新
                 state.elements.focusModeBtn.textContent = '∞';
                 state.elements.focusSlider.disabled = true;
 
-                // カメラに適用（∞モード - 厳密なチェック）
-                for (let i = 0; i < 3; i++) {
-                    const success = await applyFocusToCamera(infinityValue, true);
-                    if (success) break;
-                    await new Promise(r => setTimeout(r, 200));
-                }
+                // ∞モード: 近距離→遠距離の順で設定（レンズを確実に動かす）
+                await applyFocusToCamera(0.1);
+                await new Promise(r => setTimeout(r, 100));
+                await applyFocusToCamera(infinityValue);
 
-                // デバッグパネル更新
                 updateDebugFocusValues(infinityValue, '-', '∞');
             }
-
-            // 設定中オーバーレイを非表示
-            hideFocusSettingOverlay();
         }
 
         /**
@@ -1505,21 +1365,15 @@
             if (state.camera.focusMode !== 'manual') return;
 
             const apiValue = parseFloat(event.target.value);
-
-            // 目標値を即座に更新
             state.camera.targetFocusDistance = apiValue;
-
-            // デバッグパネルを即座に更新
             updateDebugFocusValues(apiValue, apiValue, 'MF');
 
-            // デバウンス処理
             if (state.camera.focusDebounceTimer) {
                 clearTimeout(state.camera.focusDebounceTimer);
             }
 
             state.camera.focusDebounceTimer = setTimeout(async () => {
-                debugLog(`スライダー変更: target=${apiValue}`);
-                await applyFocusToCamera(apiValue, false);  // MFモード
+                await applyFocusToCamera(apiValue);
             }, 100);
         }
 
@@ -1529,49 +1383,25 @@
         async function applyInitialFocus() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
-            debugLog('===== 初期フォーカス設定開始 =====');
+            debugLog('初期フォーカス設定開始');
 
-            // 設定中オーバーレイを表示
-            showFocusSettingOverlay();
-
-            const infinityValue = CONFIG.FOCUS_INFINITY_VALUE; // 10
+            const infinityValue = CONFIG.FOCUS_INFINITY_VALUE;
             state.camera.targetFocusDistance = infinityValue;
 
-            // 最大10回試行（∞モードの厳密なチェック付き）
-            const maxAttempts = 10;
-            let success = false;
-
-            for (let i = 0; i < maxAttempts && !success; i++) {
-                debugLog(`初期フォーカス試行 ${i + 1}/${maxAttempts}`);
-
-                // ∞モードとして適用（近距離→遠距離の順で確実にピントを動かす）
-                success = await applyFocusToCamera(infinityValue, true);
-
-                if (!success) {
-                    await new Promise(r => setTimeout(r, 300));
-                }
-            }
-
-            // 設定中オーバーレイを非表示
-            hideFocusSettingOverlay();
-
-            if (success) {
-                debugLog('★★★ 初期フォーカス設定成功 ★★★');
-            } else {
-                // 失敗しても続行（watchdogが後で修復を試みる）
-                console.warn('初期フォーカス設定: 10回試行で未完了、watchdogに委ねる');
-            }
+            // ∞モード: 近距離→遠距離の順で設定
+            await applyFocusToCamera(0.1);
+            await new Promise(r => setTimeout(r, 100));
+            await applyFocusToCamera(infinityValue);
 
             updateDebugFocusValues(infinityValue, '-', '∞');
-            debugLog('===== 初期フォーカス設定完了 =====');
+            debugLog('初期フォーカス設定完了');
 
             // watchdog開始
             startFocusWatchdog();
         }
 
         /**
-         * フォーカス監視watchdog（1秒ごと）
-         * focusModeがmanualでなければ修復を試みる
+         * フォーカス監視watchdog（2秒ごと）
          */
         function startFocusWatchdog() {
             debugLog('watchdog開始');
@@ -1581,13 +1411,16 @@
 
                 const settings = state.camera.track.getSettings();
 
-                // focusModeがmanualでなければ修復
                 if (settings.focusMode !== 'manual') {
-                    console.warn(`watchdog: focusMode=${settings.focusMode} → 修復試行`);
-                    const isInfinityMode = state.camera.focusMode === 'infinity';
-                    await applyFocusToCamera(state.camera.targetFocusDistance, isInfinityMode);
+                    debugLog(`watchdog修復: ${settings.focusMode} → manual`);
+
+                    if (state.camera.focusMode === 'infinity') {
+                        await applyFocusToCamera(0.1);
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                    await applyFocusToCamera(state.camera.targetFocusDistance);
                 }
-            }, 1000);  // 1秒ごと
+            }, 2000);
         }
 
         /**
@@ -1597,7 +1430,6 @@
             if (state.camera.watchdogId) {
                 clearInterval(state.camera.watchdogId);
                 state.camera.watchdogId = null;
-                debugLog('watchdog停止');
             }
         }
     </script>
