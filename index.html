@@ -270,7 +270,7 @@
         <div class="focus-control">
             <button id="focusModeBtn" disabled>∞</button>
             <input type="range" id="focusSlider" class="focus-slider"
-                   min="1" max="100" value="50" step="1" disabled>
+                   min="0.02" max="10" value="5" step="0.01" disabled>
         </div>
 
         <!-- 区切り -->
@@ -758,11 +758,11 @@
                     state.camera.focusDistanceMax = capabilities.focusDistance.max || Infinity;
                     debugLog(`カメラのfocusDistance範囲: ${state.camera.focusDistanceMin} - ${state.camera.focusDistanceMax}`);
 
-                    // スライダーの範囲を設定（Infinityの場合は100を上限とする）
+                    // スライダーの範囲を設定（実効範囲は0.02〜10）
                     const sliderMin = state.camera.focusDistanceMin;
                     const sliderMax = isFinite(state.camera.focusDistanceMax)
-                        ? state.camera.focusDistanceMax
-                        : 100;
+                        ? Math.min(state.camera.focusDistanceMax, 10)
+                        : 10;
                     state.elements.focusSlider.min = sliderMin;
                     state.elements.focusSlider.max = sliderMax;
                     state.elements.focusSlider.step = capabilities.focusDistance.step || 0.01;
