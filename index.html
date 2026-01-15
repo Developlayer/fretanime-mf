@@ -255,18 +255,8 @@
             Z_INDEX_ERROR: 200,          // エラーメッセージのz-index
 
             // タイミング設定
-            FRAME_CAPTURE_DELAY_MS: 50,  // フレームキャプチャ前の描画待機時間
-
-            // デバッグモード（キャリブレーション時はtrue）
-            DEBUG: false
+            FRAME_CAPTURE_DELAY_MS: 50   // フレームキャプチャ前の描画待機時間
         };
-
-        // ===== デバッグログ出力 =====
-        function debugLog(...args) {
-            if (CONFIG.DEBUG) {
-                console.log(...args);
-            }
-        }
 
         // ===== 状態管理 =====
         const state = {
@@ -350,7 +340,6 @@
         function resizeCanvas() {
             state.elements.canvas.width = window.innerWidth;
             state.elements.canvas.height = window.innerHeight;
-            debugLog(`Canvas resized: ${state.elements.canvas.width}x${state.elements.canvas.height}`);
         }
 
         // ===== イベントリスナーの設定 =====
@@ -383,11 +372,9 @@
         function handleVisibilityChange() {
             if (document.hidden) {
                 // ページが非表示になった時
-                debugLog('ページ非表示：省電力モード');
 
                 // 録画中は中断しない
                 if (state.recording.isRecording) {
-                    debugLog('録画中のため一時停止をスキップ');
                     return;
                 }
 
@@ -395,17 +382,14 @@
                 if (state.animation.isPlaying) {
                     state.animation.wasPausedByVisibility = true;
                     stopAnimation();
-                    debugLog('アニメーションを一時停止');
                 }
             } else {
                 // ページが表示された時
-                debugLog('ページ表示：復帰');
 
                 // 可視性変更で一時停止されていた場合は再開
                 if (state.animation.wasPausedByVisibility) {
                     state.animation.wasPausedByVisibility = false;
                     startAnimation();
-                    debugLog('アニメーションを再開');
                 }
             }
         }
@@ -415,7 +399,6 @@
          * @returns {Promise<void>}
          */
         async function initCamera() {
-            debugLog('カメラを初期化中...');
 
             // 描画ループをすぐに開始（ビデオ準備前でも）
             startDrawLoop();
@@ -426,8 +409,6 @@
 
                 // ビデオトラックを取得
                 state.camera.track = stream.getVideoTracks()[0];
-                debugLog('カメラトラック取得:', state.camera.track.label);
-                debugLog('トラック設定:', JSON.stringify(state.camera.track.getSettings()));
 
                 // カメラの能力を確認
                 await checkCameraCapabilities();
@@ -447,7 +428,6 @@
         // ===== 描画ループを開始 =====
         function startDrawLoop() {
             requestAnimationFrame(draw);
-            debugLog('描画ループを開始');
         }
 
         /**
@@ -466,10 +446,8 @@
                     },
                     audio: false
                 });
-                debugLog('アウトカメラ(exact)で取得成功');
                 return stream;
             } catch (e) {
-                debugLog('exact environment失敗:', e.message);
             }
 
             // 2段階目: prefer environment（アウトカメラを優先指定）
@@ -482,10 +460,8 @@
                     },
                     audio: false
                 });
-                debugLog('アウトカメラ(prefer)で取得成功');
                 return stream;
             } catch (e) {
-                debugLog('environment失敗:', e.message);
             }
 
             // 3段階目: 制約なし（どのカメラでも可）
@@ -496,7 +472,6 @@
                 },
                 audio: false
             });
-            debugLog('制約なしで取得成功');
             return stream;
         }
 
@@ -514,7 +489,6 @@
 
             // ストリームをvideo要素に接続
             state.elements.video.srcObject = stream;
-            debugLog('ストリームをvideo要素に接続');
 
             // 再生を開始し、完全に安定するまで待つ
             await playVideoAndWaitForStable();
@@ -530,13 +504,10 @@
 
                 // onplayingイベントで再生開始を検知
                 const onPlaying = () => {
-                    debugLog('video.onplaying イベント発火');
                     video.removeEventListener('playing', onPlaying);
 
                     // 追加で3秒待機してカメラを完全に安定させる
-                    debugLog('カメラ安定化のため3秒待機...');
                     setTimeout(() => {
-                        debugLog(`video安定確認: readyState=${video.readyState}, size=${video.videoWidth}x${video.videoHeight}`);
                         resolve();
                     }, 3000);
                 };
@@ -547,14 +518,12 @@
                 const tryPlay = async () => {
                     try {
                         await video.play();
-                        debugLog('video.play() 成功');
                     } catch (playError) {
                         console.error('video.play() 失敗:', playError);
                         // ユーザーインタラクション後に再試行
                         const retryPlay = async () => {
                             try {
                                 await video.play();
-                                debugLog('ユーザークリック後のplay()成功');
                             } catch (e) {
                                 console.error('クリック後のplay()も失敗:', e);
                             }
@@ -566,11 +535,9 @@
 
                 // メタデータ読み込み完了を待ってから再生
                 if (video.readyState >= 1) {
-                    debugLog('メタデータ読み込み済み、play()を呼び出し');
                     tryPlay();
                 } else {
                     video.addEventListener('loadedmetadata', () => {
-                        debugLog('loadedmetadata イベント発火');
                         tryPlay();
                     }, { once: true });
                 }
@@ -580,18 +547,15 @@
         // ===== カメラの能力を確認 =====
         async function checkCameraCapabilities() {
             if (!state.camera.track || typeof state.camera.track.getCapabilities !== 'function') {
-                debugLog('getCapabilities未サポート');
                 return;
             }
 
             const capabilities = state.camera.track.getCapabilities();
-            debugLog('カメラの能力:', capabilities);
 
             // フォーカス制御のサポートを確認
             if (capabilities.focusMode) {
                 state.camera.focusSupported = true;
                 const supportedModes = capabilities.focusMode;
-                debugLog('サポートされているフォーカスモード:', supportedModes);
 
                 // マニュアルフォーカスのサポートを確認
                 state.camera.mfSupported = supportedModes.includes('manual');
@@ -600,7 +564,6 @@
                 if (capabilities.focusDistance) {
                     state.camera.focusDistanceMin = capabilities.focusDistance.min || 0;
                     state.camera.focusDistanceMax = capabilities.focusDistance.max || Infinity;
-                    debugLog(`カメラのfocusDistance範囲: ${state.camera.focusDistanceMin} - ${state.camera.focusDistanceMax}`);
 
                     // スライダーの範囲を設定（実効範囲: 0.02〜5）
                     // 5以上は適用値が固定、10以上はInfinityになるため
@@ -618,7 +581,6 @@
                 state.elements.focusModeBtn.classList.add('active');
                 // 初期フォーカス設定はvideo再生開始後に行う（applyInitialFocusで実行）
             } else {
-                debugLog('フォーカス制御は未サポート');
             }
         }
 
@@ -637,7 +599,6 @@
          */
         function setGridMode(mode) {
             state.display.gridMode = mode;
-            debugLog('グリッドモード変更:', mode);
 
             // ボタンのアクティブ状態を更新
             state.elements.gridButtons.forEach(btn => {
@@ -858,7 +819,6 @@
 
             state.animation.isPlaying = true;
             state.animation.currentFrame = 0;
-            debugLog('アニメーション開始');
 
             // ボタン状態を更新（停止ボタンに変更）
             updatePlayButtonState(true);
@@ -877,7 +837,6 @@
 
             state.animation.isPlaying = false;
             state.animation.currentFrame = 0;
-            debugLog('アニメーション停止');
 
             // ボタン状態を更新（再生ボタンに変更）
             updatePlayButtonState(false);
@@ -952,7 +911,6 @@
                 // Canvasからフレームをキャプチャ
                 const frameData = state.elements.canvas.toDataURL('image/png');
                 state.recording.capturedFrames.push(frameData);
-                debugLog(`フレーム ${i} キャプチャ完了`);
 
                 // 次のフレームまで待機（最後のフレーム以外）
                 if (i < CONFIG.TOTAL_FRAMES - 1) {
@@ -974,7 +932,6 @@
             // 既に録画中または変換中は無視
             if (state.recording.isRecording || state.recording.isConverting) return;
 
-            debugLog('1ループ録画開始');
             state.recording.isRecording = true;
             state.recording.capturedFrames = [];
 
@@ -1009,16 +966,13 @@
          */
         async function preloadEncoder() {
             if (typeof HME === 'undefined') {
-                debugLog('h264-mp4-encoder 未ロード、事前ロードをスキップ');
                 return;
             }
 
             try {
                 const encoder = await HME.createH264MP4Encoder();
                 encoder.delete();  // すぐに解放
-                debugLog('h264-mp4-encoder 事前ロード完了');
             } catch (e) {
-                debugLog('h264-mp4-encoder 事前ロード失敗:', e);
             }
         }
 
@@ -1030,7 +984,6 @@
         async function createMP4FromFrames() {
             // h264-mp4-encoderのサポート確認
             if (typeof HME === 'undefined') {
-                debugLog('h264-mp4-encoder未ロード、静止画にフォールバック');
                 await createFallbackImage();
                 return;
             }
@@ -1044,7 +997,6 @@
                 const encoderWidth = Math.floor(width / 2) * 2;
                 const encoderHeight = Math.floor(height / 2) * 2;
 
-                debugLog('MP4エンコード開始:', encoderWidth, 'x', encoderHeight, '@', fps, 'fps');
 
                 // エンコーダーを作成（非同期）
                 const encoder = await HME.createH264MP4Encoder();
@@ -1073,7 +1025,6 @@
                     offCtx.drawImage(img, 0, 0, encoderWidth, encoderHeight);
                     const imageData = offCtx.getImageData(0, 0, encoderWidth, encoderHeight);
                     encoder.addFrameRgba(imageData.data);
-                    debugLog('フレーム追加:', i + 1, '/', state.recording.capturedFrames.length);
                 }
 
                 // エンコード完了
@@ -1087,7 +1038,6 @@
                 const blob = new Blob([mp4Data], { type: 'video/mp4' });
                 downloadBlob(blob, `fretanime_${getTimestamp()}.mp4`);
 
-                debugLog('MP4生成完了:', blob.size, 'bytes');
 
             } catch (error) {
                 console.error('MP4生成エラー:', error);
@@ -1102,7 +1052,6 @@
          * @returns {Promise<void>}
          */
         async function createFallbackImage() {
-            debugLog('MP4が使用できないため静止画として保存');
 
             // キャプチャフレームの存在確認
             if (!state.recording.capturedFrames || state.recording.capturedFrames.length === 0) {
@@ -1135,7 +1084,6 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            debugLog('ファイル保存:', filename);
         }
 
         // =====================================================
@@ -1151,7 +1099,6 @@
         async function setFocusDistance(apiValue) {
             if (!state.camera.track) return false;
 
-            debugLog(`setFocusDistance呼び出し: apiValue=${apiValue}`);
 
             // 最大3回リトライ
             for (let attempt = 0; attempt < 3; attempt++) {
@@ -1169,15 +1116,12 @@
 
                     // 設定後の実際の値を確認
                     const settings = state.camera.track.getSettings();
-                    debugLog(`フォーカス設定試行${attempt + 1}: 要求=${apiValue}, 適用focusMode=${settings.focusMode}, 適用focusDistance=${settings.focusDistance}`);
 
                     if (settings.focusMode === 'manual') {
-                        debugLog(`setFocusDistance成功（${attempt + 1}回目）`);
                         return true;
                     }
 
                     // focusModeがmanualでない場合、待機時間を増やして再試行
-                    debugLog(`focusModeがmanualでないため再試行...（${attempt + 1}回目失敗）`);
                     await new Promise(resolve => setTimeout(resolve, 150));
 
                 } catch (error) {
@@ -1198,7 +1142,6 @@
 
             if (state.camera.focusMode === 'infinity') {
                 // ∞ → MF に切り替え
-                debugLog('∞ → MF モード切り替え開始');
 
                 const apiValue = parseFloat(state.elements.focusSlider.value);
                 state.camera.targetFocusDistance = apiValue;
@@ -1211,24 +1154,20 @@
 
                 // 最終確認
                 const settings = state.camera.track.getSettings();
-                debugLog(`MFモード切り替え完了: success=${success}, 実際のfocusMode=${settings.focusMode}, focusDistance=${settings.focusDistance}`);
 
             } else {
                 // MF → ∞ に切り替え
                 // 【教訓】確実にレンズを動かすため、近距離→遠距離の順で設定
-                debugLog('MF → ∞ モード切り替え開始');
 
                 const nearDistance = CONFIG.FOCUS_MIN_API;
                 const infinityValue = CONFIG.FOCUS_INFINITY_VALUE;
                 state.camera.targetFocusDistance = infinityValue;
 
                 // ステップ1: 近距離に設定してレンズを手前に動かす
-                debugLog(`  ステップ1: 近距離(${nearDistance})に設定`);
                 await setFocusDistance(nearDistance);
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 // ステップ2: ∞に設定してレンズを奥に動かす
-                debugLog(`  ステップ2: ∞(${infinityValue})に設定`);
                 const success = await setFocusDistance(infinityValue);
 
                 // UIを更新
@@ -1238,7 +1177,6 @@
 
                 // 最終確認
                 const settings = state.camera.track.getSettings();
-                debugLog(`∞モード切り替え完了: success=${success}, 実際のfocusMode=${settings.focusMode}, focusDistance=${settings.focusDistance}`);
             }
         }
 
@@ -1274,7 +1212,6 @@
         async function applyInitialFocus() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
-            debugLog('========== 初期フォーカス強制適用開始 ==========');
 
             const nearDistance = CONFIG.FOCUS_MIN_API;  // 最近接（0.02）
             const targetDistance = CONFIG.FOCUS_INFINITY_VALUE;  // ∞モード（5）
@@ -1288,15 +1225,12 @@
             // 強制適用ループ
             while (attempt < maxAttempts && !success) {
                 attempt++;
-                debugLog(`強制適用試行 ${attempt}/${maxAttempts}`);
 
                 // 現在の状態を確認
                 const beforeSettings = state.camera.track.getSettings();
-                debugLog(`  適用前: focusMode=${beforeSettings.focusMode}, focusDistance=${beforeSettings.focusDistance}`);
 
                 try {
                     // ステップ1: まず近距離に設定してレンズを手前に動かす
-                    debugLog(`  ステップ1: 近距離(${nearDistance})に設定`);
                     await state.camera.track.applyConstraints({
                         advanced: [{
                             focusMode: 'manual',
@@ -1308,7 +1242,6 @@
                     await new Promise(resolve => setTimeout(resolve, 300));
 
                     // ステップ2: 目標距離（∞）に設定してレンズを奥に動かす
-                    debugLog(`  ステップ2: 目標距離(${targetDistance})に設定`);
                     await state.camera.track.applyConstraints({
                         advanced: [{
                             focusMode: 'manual',
@@ -1317,7 +1250,6 @@
                     });
 
                 } catch (e) {
-                    debugLog(`  適用エラー: ${e.message}`);
                 }
 
                 // 設定反映待機
@@ -1325,17 +1257,14 @@
 
                 // 適用後の状態を確認
                 const afterSettings = state.camera.track.getSettings();
-                debugLog(`  適用後: focusMode=${afterSettings.focusMode}, focusDistance=${afterSettings.focusDistance}`);
 
                 // focusModeがmanualになったら成功
                 if (afterSettings.focusMode === 'manual') {
                     success = true;
-                    debugLog(`========== 初期フォーカス適用成功（${attempt}回目） ==========`);
                 }
             }
 
             if (!success) {
-                debugLog('========== 初期フォーカス適用失敗（タイムアウト） ==========');
             }
 
             // watchdog開始
@@ -1347,7 +1276,6 @@
          * focusModeがmanualでなくなったら修復
          */
         function startFocusWatchdog() {
-            debugLog('watchdog開始');
 
             state.camera.watchdogId = setInterval(async () => {
                 if (!state.camera.track) return;
@@ -1355,7 +1283,6 @@
                 const settings = state.camera.track.getSettings();
 
                 if (settings.focusMode !== 'manual') {
-                    debugLog(`watchdog修復: ${settings.focusMode} → manual, target=${state.camera.targetFocusDistance}`);
                     await setFocusDistance(state.camera.targetFocusDistance);
                 }
             }, 2000);
