@@ -270,7 +270,7 @@
         <div class="focus-control">
             <button id="focusModeBtn" disabled>∞</button>
             <input type="range" id="focusSlider" class="focus-slider"
-                   min="0.02" max="5" value="2.5" step="0.01" disabled>
+                   min="0.02" max="100" value="0.02" step="0.01" disabled>
         </div>
 
         <!-- 区切り -->
@@ -758,15 +758,17 @@
                     state.camera.focusDistanceMax = capabilities.focusDistance.max || Infinity;
                     debugLog(`カメラのfocusDistance範囲: ${state.camera.focusDistanceMin} - ${state.camera.focusDistanceMax}`);
 
-                    // スライダーの範囲を設定（実効範囲は0.02〜5）
-                    const sliderMin = state.camera.focusDistanceMin;
+                    // スライダーの範囲を設定（カメラの能力値をそのまま使用）
+                    const sliderMin = state.camera.focusDistanceMin || 0.02;
+                    // maxがInfinityの場合は100を代用（∞モードで無限遠は設定可能）
                     const sliderMax = isFinite(state.camera.focusDistanceMax)
-                        ? Math.min(state.camera.focusDistanceMax, 5)
-                        : 5;
+                        ? state.camera.focusDistanceMax
+                        : 100;
+                    const sliderStep = capabilities.focusDistance.step || 0.01;
                     state.elements.focusSlider.min = sliderMin;
                     state.elements.focusSlider.max = sliderMax;
-                    state.elements.focusSlider.step = capabilities.focusDistance.step || 0.01;
-                    state.elements.focusSlider.value = (sliderMin + sliderMax) / 2;
+                    state.elements.focusSlider.step = sliderStep;
+                    state.elements.focusSlider.value = sliderMin; // 最小値から開始
                 }
 
                 // フォーカスUIを有効化
