@@ -268,7 +268,7 @@
     <div class="ui-container">
         <!-- フォーカスコントロール（新規追加） -->
         <div class="focus-control">
-            <button id="focusModeBtn" disabled>AF</button>
+            <button id="focusModeBtn" disabled>∞</button>
             <input type="range" id="focusSlider" class="focus-slider"
                    min="1" max="100" value="50" step="1" disabled>
         </div>
@@ -428,7 +428,7 @@
                 track: null,               // カメラのビデオトラック
                 focusSupported: false,     // フォーカス制御サポートフラグ
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
-                focusMode: 'continuous',   // フォーカスモード: 'continuous' | 'manual' | 'infinity'
+                focusMode: 'infinity',     // フォーカスモード: 'continuous' | 'manual' | 'infinity'
                 focusDistanceMin: 0,       // カメラのfocusDistance最小値
                 focusDistanceMax: Infinity // カメラのfocusDistance最大値
             },
@@ -771,6 +771,11 @@
 
                 // フォーカスUIを有効化
                 state.elements.focusModeBtn.disabled = false;
+                state.elements.focusModeBtn.classList.add('active');
+
+                // 初期状態で∞モードを適用
+                setFocusDistance(Infinity);
+                updateDebugFocusValues(Infinity, '-', '∞');
             } else {
                 debugLog('フォーカス制御は未サポート');
             }
@@ -1292,11 +1297,25 @@
             debugLog('ファイル保存:', filename);
         }
 
-        // ===== フォーカスモードの切り替え（AF → MF → ∞ → AF） =====
+        // ===== フォーカスモードの切り替え（∞ → AF → MF → ∞） =====
         async function toggleFocusMode() {
             if (!state.camera.focusSupported) return;
 
-            if (state.camera.focusMode === 'continuous') {
+            if (state.camera.focusMode === 'infinity') {
+                // ∞ → AF に切り替え
+                state.camera.focusMode = 'continuous';
+                state.elements.focusModeBtn.textContent = 'AF';
+                state.elements.focusModeBtn.classList.remove('active');
+                state.elements.focusSlider.disabled = true;
+
+                await setAutoFocus();
+
+                // デバッグパネルを更新（AFモード）
+                updateDebugFocusValues('AUTO', '-', 'AF');
+
+                debugLog('オートフォーカスモードに切り替え');
+
+            } else if (state.camera.focusMode === 'continuous') {
                 // AF → MF に切り替え
                 if (!state.camera.mfSupported) {
                     debugLog('マニュアルフォーカスは未サポート');
@@ -1317,7 +1336,7 @@
 
                 debugLog('マニュアルフォーカスモードに切り替え');
 
-            } else if (state.camera.focusMode === 'manual') {
+            } else {
                 // MF → ∞ に切り替え
                 state.camera.focusMode = 'infinity';
                 state.elements.focusModeBtn.textContent = '∞';
@@ -1331,20 +1350,6 @@
                 updateDebugFocusValues(Infinity, '-', '∞');
 
                 debugLog('∞（無限遠）モードに切り替え');
-
-            } else {
-                // ∞ → AF に切り替え
-                state.camera.focusMode = 'continuous';
-                state.elements.focusModeBtn.textContent = 'AF';
-                state.elements.focusModeBtn.classList.remove('active');
-                state.elements.focusSlider.disabled = true;
-
-                await setAutoFocus();
-
-                // デバッグパネルを更新（AFモード）
-                updateDebugFocusValues('AUTO', '-', 'AF');
-
-                debugLog('オートフォーカスモードに切り替え');
             }
         }
 
