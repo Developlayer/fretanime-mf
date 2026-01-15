@@ -489,3 +489,122 @@ function apiToRealDistance(apiValue) { /* 逆変換処理 */ }
 - fretanime-mf_specification: フォーカス仕様を更新
 
 ---
+
+#### マニュアルフォーカス制御の根本的修正
+
+##### 問題の経緯
+
+ユーザーテストで以下の問題が発覚：
+- AFモードを廃止し、∞/MFの2モードに簡略化した後も、AFが動作し続ける問題が発生
+- focusModeを'manual'に設定しても、実際にはAFが維持されてしまう
+
+##### 試行錯誤の過程
+
+| 試行 | 内容 | 結果 |
+|------|------|------|
+| 1 | focusModeとfocusDistanceを別々にapplyConstraints | ❌ AFが維持される |
+| 2 | getUserMediaでfocusMode:'manual'を指定 | ❌ カメラ取得自体が失敗 |
+| 3 | 設定中オーバーレイを追加し、設定完了まで表示 | ❌ 永遠に終わらない無限ループ |
+| 4 | focusModeとfocusDistanceの両方を厳密に検証 | ❌ 無限ループ継続 |
+| 5 | 検証をfocusModeのみに緩和 | ❌ AFが維持される（元に戻る） |
+| 6 | 以前うまくいっていたコードを参照 | ✅ **成功** |
+
+##### 根本原因と解決策
+
+**根本原因:**
+- `applyConstraints({ focusMode: 'manual' })` と `applyConstraints({ focusDistance: value })` を**別々に**呼び出すと、Chromebookではfocusmodeが'continuous'のまま維持される
+
+**解決策（以前うまくいっていた方式）:**
+```javascript
+// ❌ ダメな方式（別々に設定）
+await track.applyConstraints({ focusMode: 'manual' });
+await track.applyConstraints({ focusDistance: value });
+
+// ✅ 正しい方式（advancedオプションで同時設定）
+await track.applyConstraints({
+    advanced: [{
+        focusMode: 'manual',
+        focusDistance: value
+    }]
+});
+```
+
+**重要な教訓:**
+1. **`advanced`オプションは必須**: Chromebookでは、focusModeとfocusDistanceを同時に設定しないとAFが維持される
+2. **getUserMediaでfocusModeを指定しない**: カメラ取得時にfocusModeを指定すると、Chromebookではカメラ取得自体が失敗する
+3. **リトライロジックは必要**: 初回適用で失敗することがあるため、最大3回のリトライが有効
+
+##### 現在の状態（2026-01-15時点）
+
+**動作するもの:**
+- ∞モードとMFモードの切り替え → focusModeは確実に'manual'になる
+- MFモードでのスライダー操作 → focusDistanceが正しく反映される
+- watchdogによるAF自動復帰の防止 → 2秒ごとに監視・修復
+
+**残っている問題:**
+- 初回起動時の∞モードで、focusDistanceが正しく設定されない
+- カメラ起動直後にAFで合わせたピント位置がそのまま継承されてしまう
+- focusModeは'manual'になるが、focusDistanceは変わらない
+
+##### コード構造（修正後）
+
+```javascript
+// フォーカス設定関数（advancedオプション使用）
+async function setFocusDistance(apiValue) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await track.applyConstraints({
+            advanced: [{
+                focusMode: 'manual',
+                focusDistance: apiValue
+            }]
+        });
+
+        const settings = track.getSettings();
+        if (settings.focusMode === 'manual') {
+            return true;  // 成功
+        }
+    }
+    return false;  // 3回失敗
+}
+
+// 初期フォーカス適用（最大10回試行）
+async function applyInitialFocus() {
+    const targetDistance = CONFIG.FOCUS_INFINITY_VALUE; // 5
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+        await track.applyConstraints({
+            advanced: [{
+                focusMode: 'manual',
+                focusDistance: targetDistance
+            }]
+        });
+
+        const settings = track.getSettings();
+        if (settings.focusMode === 'manual') {
+            break;  // 成功
+        }
+    }
+
+    startFocusWatchdog();
+}
+
+// watchdog（2秒ごと）
+function startFocusWatchdog() {
+    setInterval(async () => {
+        const settings = track.getSettings();
+        if (settings.focusMode !== 'manual') {
+            await setFocusDistance(state.camera.targetFocusDistance);
+        }
+    }, 2000);
+}
+```
+
+##### 次のステップ
+
+初回起動時のfocusDistance問題を解決するため、以下のアプローチを検討：
+
+1. **カメラ安定化待機時間の延長**: 現在3秒 → より長く待機してからフォーカス設定
+2. **focusDistance検証の追加**: focusModeだけでなくfocusDistanceも確認
+3. **強制的なレンズ移動**: 一度近距離（0.1など）に設定してから目標距離に設定
+
+---
