@@ -393,11 +393,18 @@
             state.elements.dbgDisplayValue.textContent = displayValue;
 
             // 実際に適用された値をgetSettings()から取得
-            if (state.camera.track) {
-                const settings = state.camera.track.getSettings();
-                state.elements.dbgFocusActual.textContent = settings.focusDistance ?? '-';
-                state.elements.dbgFocusMode.textContent = settings.focusMode ?? '-';
-            }
+            updateDebugActualValues();
+        }
+
+        /**
+         * デバッグパネルの適用値を更新する
+         */
+        function updateDebugActualValues() {
+            if (!CONFIG.DEBUG || !state.camera.track) return;
+
+            const settings = state.camera.track.getSettings();
+            state.elements.dbgFocusActual.textContent = settings.focusDistance ?? '-';
+            state.elements.dbgFocusMode.textContent = settings.focusMode ?? '-';
         }
 
         // ===== 状態管理 =====
@@ -486,6 +493,8 @@
             // デバッグモード時はデバッグパネルを表示
             if (CONFIG.DEBUG) {
                 state.elements.debugPanel.classList.add('visible');
+                // 適用値を定期的に更新（500msごと）
+                setInterval(updateDebugActualValues, 500);
             }
 
             // Canvasサイズの初期設定
@@ -589,6 +598,9 @@
 
                 // video要素をセットアップ
                 await setupVideoElement(stream);
+
+                // 初期フォーカス設定を適用（video再生開始後）
+                await applyInitialFocus();
 
             } catch (error) {
                 console.error('カメラの初期化に失敗:', error);
@@ -776,10 +788,7 @@
                 // フォーカスUIを有効化
                 state.elements.focusModeBtn.disabled = false;
                 state.elements.focusModeBtn.classList.add('active');
-
-                // 初期状態で∞モードを適用
-                await setFocusDistance(Infinity);
-                updateDebugFocusValues(Infinity, '-', '∞');
+                // 初期フォーカス設定はvideo再生開始後に行う（applyInitialFocusで実行）
             } else {
                 debugLog('フォーカス制御は未サポート');
             }
@@ -1366,6 +1375,28 @@
 
             // デバッグパネルを更新
             updateDebugFocusValues(apiValue, apiValue, 'MF');
+        }
+
+        /**
+         * 初期フォーカス設定を適用する（video再生開始後に呼び出す）
+         * @returns {Promise<void>}
+         */
+        async function applyInitialFocus() {
+            if (!state.camera.focusSupported || !state.camera.mfSupported) return;
+
+            debugLog('初期フォーカス設定を適用中...');
+
+            // 少し待ってからフォーカス設定を適用（カメラの準備完了を待つ）
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // ∞モードを適用
+            await setFocusDistance(Infinity);
+
+            // 設定後に少し待ってからデバッグ表示を更新
+            await new Promise(resolve => setTimeout(resolve, 100));
+            updateDebugFocusValues(Infinity, '-', '∞');
+
+            debugLog('初期フォーカス設定完了');
         }
 
         /**
