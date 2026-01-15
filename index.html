@@ -20,7 +20,6 @@
             --color-active: #4a90d9;
             --color-recording: #d94a4a;
             --color-text: white;
-            --color-text-muted: rgba(255, 255, 255, 0.5);
             --color-divider: rgba(255, 255, 255, 0.3);
         }
 
@@ -242,9 +241,9 @@
             VIDEO_HEIGHT: 720,
 
             // フォーカス設定（API値）
-            FOCUS_INFINITY_VALUE: 5,     // ∞モードで使用する値（MFの最大値と同じ）
+            FOCUS_INFINITY_VALUE: 5,     // ∞モードで使用する値
             FOCUS_MIN_API: 0.02,         // スライダー最小値
-            FOCUS_MAX_API: 5,            // スライダー最大値（実効範囲）
+            FOCUS_MAX_API: 5,            // スライダー最大値
 
             // 録画設定
             VIDEO_FPS: 4,
@@ -276,8 +275,8 @@
                 focusSupported: false,     // フォーカス制御サポートフラグ
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
                 focusMode: 'infinity',     // UIフォーカスモード: 'infinity' | 'manual'
-                targetFocusDistance: 10,   // 目標focusDistance（初期値=∞モード用の10）
-                focusDistanceMin: 0.02,    // カメラのfocusDistance最小値
+                targetFocusDistance: 5,    // 目標focusDistance（初期値=∞モード）
+                focusDistanceMin: null,    // カメラのfocusDistance最小値（初期化時に設定）
                 watchdogId: null,          // フォーカス監視watchdogのインターバルID
                 focusDebounceTimer: null   // スライダーのデバウンスタイマー
             },
@@ -394,7 +393,6 @@
          * @returns {Promise<void>}
          */
         async function initCamera() {
-
             // 描画ループをすぐに開始（ビデオ準備前でも）
             startDrawLoop();
 
@@ -555,12 +553,11 @@
 
                 // カメラのfocusDistance範囲を保存
                 if (capabilities.focusDistance) {
-                    state.camera.focusDistanceMin = capabilities.focusDistance.min || 0;
+                    state.camera.focusDistanceMin = capabilities.focusDistance.min || CONFIG.FOCUS_MIN_API;
 
-                    // スライダーの範囲を設定（実効範囲: 0.02〜5）
-                    // 5以上は適用値が固定、10以上はInfinityになるため
-                    const sliderMin = state.camera.focusDistanceMin || 0.02;
-                    const sliderMax = 5;
+                    // スライダーの範囲を設定
+                    const sliderMin = state.camera.focusDistanceMin;
+                    const sliderMax = CONFIG.FOCUS_MAX_API;
                     const sliderStep = capabilities.focusDistance.step || 0.01;
                     state.elements.focusSlider.min = sliderMin;
                     state.elements.focusSlider.max = sliderMax;
