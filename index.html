@@ -631,11 +631,28 @@
         }
 
         /**
-         * カメラストリームを取得する（3段階フォールバック）
+         * カメラストリームを取得する（フォールバック付き）
          * @returns {Promise<MediaStream>} カメラのメディアストリーム
          */
         async function acquireCameraStream() {
-            // 1段階目: exact environment（アウトカメラを厳密に指定）
+            // 1段階目: exact environment + focusMode manual
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { exact: 'environment' },
+                        width: { ideal: CONFIG.VIDEO_WIDTH },
+                        height: { ideal: CONFIG.VIDEO_HEIGHT },
+                        focusMode: 'manual'
+                    },
+                    audio: false
+                });
+                debugLog('アウトカメラ(exact) + MFで取得成功');
+                return stream;
+            } catch (e) {
+                debugLog('exact + MF失敗:', e.message);
+            }
+
+            // 2段階目: exact environment（MFなし）
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
@@ -651,7 +668,24 @@
                 debugLog('exact environment失敗:', e.message);
             }
 
-            // 2段階目: prefer environment（アウトカメラを優先指定）
+            // 3段階目: prefer environment + focusMode manual
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: CONFIG.VIDEO_WIDTH },
+                        height: { ideal: CONFIG.VIDEO_HEIGHT },
+                        focusMode: 'manual'
+                    },
+                    audio: false
+                });
+                debugLog('アウトカメラ(prefer) + MFで取得成功');
+                return stream;
+            } catch (e) {
+                debugLog('prefer + MF失敗:', e.message);
+            }
+
+            // 4段階目: prefer environment（MFなし）
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
@@ -667,7 +701,7 @@
                 debugLog('environment失敗:', e.message);
             }
 
-            // 3段階目: 制約なし（どのカメラでも可）
+            // 5段階目: 制約なし
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     width: { ideal: CONFIG.VIDEO_WIDTH },
@@ -1395,74 +1429,77 @@
          * @returns {Promise<boolean>} 設定が成功したかどうか
          */
         async function applyFocusToCamera(targetDistance, isInfinityMode = false) {
-            if (!state.camera.track) return false;
-
-            debugLog(`applyFocusToCamera: target=${targetDistance}, isInfinityMode=${isInfinityMode}`);
-
-            // ∞モードの場合、まず近い位置に一度フォーカスを動かしてから遠くに設定
-            // これにより、レンズが確実に物理的に動く
-            if (isInfinityMode) {
-                try {
-                    // Step 1: まずfocusModeをmanualに
-                    await state.camera.track.applyConstraints({ focusMode: 'manual' });
-                    await new Promise(r => setTimeout(r, 100));
-
-                    // Step 2: 一度近い位置（0.5m）に設定してピントを動かす
-                    debugLog('∞モード: まず近距離(0.5)に設定');
-                    await state.camera.track.applyConstraints({ focusDistance: 0.5 });
-                    await new Promise(r => setTimeout(r, 200));
-
-                    // Step 3: 目標の遠距離（10）に設定
-                    debugLog('∞モード: 遠距離(10)に設定');
-                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
-                    await new Promise(r => setTimeout(r, 200));
-
-                    // 検証
-                    let settings = state.camera.track.getSettings();
-                    if (verifyInfinityFocus(settings)) {
-                        debugLog(`∞モード設定成功: distance=${settings.focusDistance}`);
-                        return true;
-                    }
-
-                    // 追加リトライ: もう一度遠距離を設定
-                    debugLog('∞モード: 追加リトライ');
-                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
-                    await new Promise(r => setTimeout(r, 200));
-
-                    settings = state.camera.track.getSettings();
-                    if (verifyInfinityFocus(settings)) {
-                        debugLog(`∞モード設定成功(リトライ): distance=${settings.focusDistance}`);
-                        return true;
-                    }
-
-                    debugLog(`∞モード設定失敗: distance=${settings.focusDistance}`);
-                    return false;
-
-                } catch (e) {
-                    debugLog(`∞モード設定エラー: ${e.message}`);
-                    return false;
-                }
+            if (!state.camera.track) {
+                debugLog('applyFocusToCamera: trackがない');
+                return false;
             }
 
-            // MFモードの場合
-            try {
-                await state.camera.track.applyConstraints({ focusMode: 'manual' });
-                await new Promise(r => setTimeout(r, 50));
+            // 現在の状態をログ
+            const beforeSettings = state.camera.track.getSettings();
+            debugLog(`applyFocus開始: target=${targetDistance}, isInfinity=${isInfinityMode}`);
+            debugLog(`  変更前: mode=${beforeSettings.focusMode}, distance=${beforeSettings.focusDistance}`);
 
-                await state.camera.track.applyConstraints({ focusDistance: targetDistance });
-                await new Promise(r => setTimeout(r, 100));
+            try {
+                // Step 1: focusModeをmanualに設定
+                debugLog('  Step1: focusMode=manual を設定');
+                await state.camera.track.applyConstraints({ focusMode: 'manual' });
+                await new Promise(r => setTimeout(r, 300));
 
                 let settings = state.camera.track.getSettings();
-                if (verifyManualFocus(settings)) {
-                    debugLog(`MFモード設定成功: distance=${settings.focusDistance}`);
-                    return true;
+                debugLog(`  Step1後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
+
+                if (settings.focusMode !== 'manual') {
+                    debugLog('  ★ focusModeがmanualにならない！');
+                    return false;
                 }
 
-                debugLog(`MFモード設定失敗: mode=${settings.focusMode}`);
-                return false;
+                // ∞モードの場合: 近距離→遠距離の順で設定
+                if (isInfinityMode) {
+                    // Step 2: 近距離に設定（レンズを動かすため）
+                    debugLog('  Step2: 近距離(0.5)に設定');
+                    await state.camera.track.applyConstraints({ focusDistance: 0.5 });
+                    await new Promise(r => setTimeout(r, 300));
+
+                    settings = state.camera.track.getSettings();
+                    debugLog(`  Step2後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
+
+                    // Step 3: 遠距離に設定
+                    debugLog(`  Step3: 遠距離(${targetDistance})に設定`);
+                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
+                    await new Promise(r => setTimeout(r, 300));
+
+                    settings = state.camera.track.getSettings();
+                    debugLog(`  Step3後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
+
+                    // 検証
+                    if (verifyInfinityFocus(settings)) {
+                        debugLog('  ★ ∞モード設定成功');
+                        return true;
+                    }
+
+                    // リトライ
+                    debugLog('  リトライ: 再度遠距離を設定');
+                    await state.camera.track.applyConstraints({ focusDistance: targetDistance });
+                    await new Promise(r => setTimeout(r, 300));
+
+                    settings = state.camera.track.getSettings();
+                    debugLog(`  リトライ後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
+
+                    return verifyInfinityFocus(settings);
+                }
+
+                // MFモードの場合
+                debugLog(`  Step2: focusDistance=${targetDistance}に設定`);
+                await state.camera.track.applyConstraints({ focusDistance: targetDistance });
+                await new Promise(r => setTimeout(r, 200));
+
+                settings = state.camera.track.getSettings();
+                debugLog(`  Step2後: mode=${settings.focusMode}, distance=${settings.focusDistance}`);
+
+                return verifyManualFocus(settings);
 
             } catch (e) {
-                debugLog(`MFモード設定エラー: ${e.message}`);
+                debugLog(`  エラー: ${e.message}`);
                 return false;
             }
         }
