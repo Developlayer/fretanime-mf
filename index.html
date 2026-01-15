@@ -203,7 +203,7 @@
 
     <!-- UIオーバーレイ（右上） -->
     <div class="ui-container">
-        <!-- フォーカスコントロール（新規追加） -->
+        <!-- フォーカスコントロール -->
         <div class="focus-control">
             <button id="focusModeBtn" disabled>∞</button>
             <input type="range" id="focusSlider" class="focus-slider"
@@ -442,8 +442,7 @@
                     audio: false
                 });
                 return stream;
-            } catch (e) {
-            }
+            } catch (e) { /* フォールバックへ */ }
 
             // 2段階目: prefer environment（アウトカメラを優先指定）
             try {
@@ -456,8 +455,7 @@
                     audio: false
                 });
                 return stream;
-            } catch (e) {
-            }
+            } catch (e) { /* フォールバックへ */ }
 
             // 3段階目: 制約なし（どのカメラでも可）
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -573,8 +571,6 @@
                 // フォーカスUIを有効化
                 state.elements.focusModeBtn.disabled = false;
                 state.elements.focusModeBtn.classList.add('active');
-                // 初期フォーカス設定はvideo再生開始後に行う（applyInitialFocusで実行）
-            } else {
             }
         }
 
@@ -959,15 +955,11 @@
          * @returns {Promise<void>}
          */
         async function preloadEncoder() {
-            if (typeof HME === 'undefined') {
-                return;
-            }
-
+            if (typeof HME === 'undefined') return;
             try {
                 const encoder = await HME.createH264MP4Encoder();
-                encoder.delete();  // すぐに解放
-            } catch (e) {
-            }
+                encoder.delete();
+            } catch (e) { /* 無視 */ }
         }
 
         /**
@@ -990,7 +982,6 @@
                 // 幅と高さは2の倍数である必要がある
                 const encoderWidth = Math.floor(width / 2) * 2;
                 const encoderHeight = Math.floor(height / 2) * 2;
-
 
                 // エンコーダーを作成（非同期）
                 const encoder = await HME.createH264MP4Encoder();
@@ -1031,8 +1022,6 @@
                 // Blobを作成してダウンロード
                 const blob = new Blob([mp4Data], { type: 'video/mp4' });
                 downloadBlob(blob, `fretanime_${getTimestamp()}.mp4`);
-
-
             } catch (error) {
                 console.error('MP4生成エラー:', error);
                 // フォールバック
@@ -1046,7 +1035,6 @@
          * @returns {Promise<void>}
          */
         async function createFallbackImage() {
-
             // キャプチャフレームの存在確認
             if (!state.recording.capturedFrames || state.recording.capturedFrames.length === 0) {
                 console.error('フォールバック保存失敗: キャプチャフレームがありません');
@@ -1093,7 +1081,6 @@
         async function setFocusDistance(apiValue) {
             if (!state.camera.track) return false;
 
-
             // 最大3回リトライ
             for (let attempt = 0; attempt < 3; attempt++) {
                 try {
@@ -1136,23 +1123,16 @@
 
             if (state.camera.focusMode === 'infinity') {
                 // ∞ → MF に切り替え
-
                 const apiValue = parseFloat(state.elements.focusSlider.value);
                 state.camera.targetFocusDistance = apiValue;
-                const success = await setFocusDistance(apiValue);
+                await setFocusDistance(apiValue);
 
                 // UIを更新
                 state.camera.focusMode = 'manual';
                 state.elements.focusModeBtn.textContent = 'MF';
                 state.elements.focusSlider.disabled = false;
-
-                // 最終確認
-                const settings = state.camera.track.getSettings();
-
             } else {
-                // MF → ∞ に切り替え
-                // 【教訓】確実にレンズを動かすため、近距離→遠距離の順で設定
-
+                // MF → ∞ に切り替え（近距離→遠距離の順でレンズを確実に動かす）
                 const nearDistance = CONFIG.FOCUS_MIN_API;
                 const infinityValue = CONFIG.FOCUS_INFINITY_VALUE;
                 state.camera.targetFocusDistance = infinityValue;
@@ -1162,15 +1142,12 @@
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 // ステップ2: ∞に設定してレンズを奥に動かす
-                const success = await setFocusDistance(infinityValue);
+                await setFocusDistance(infinityValue);
 
                 // UIを更新
                 state.camera.focusMode = 'infinity';
                 state.elements.focusModeBtn.textContent = '∞';
                 state.elements.focusSlider.disabled = true;
-
-                // 最終確認
-                const settings = state.camera.track.getSettings();
             }
         }
 
@@ -1206,59 +1183,34 @@
         async function applyInitialFocus() {
             if (!state.camera.focusSupported || !state.camera.mfSupported) return;
 
-
-            const nearDistance = CONFIG.FOCUS_MIN_API;  // 最近接（0.02）
-            const targetDistance = CONFIG.FOCUS_INFINITY_VALUE;  // ∞モード（5）
+            const nearDistance = CONFIG.FOCUS_MIN_API;
+            const targetDistance = CONFIG.FOCUS_INFINITY_VALUE;
             state.camera.targetFocusDistance = targetDistance;
 
             const maxAttempts = 10;
             const intervalMs = 500;
-            let attempt = 0;
-            let success = false;
 
-            // 強制適用ループ
-            while (attempt < maxAttempts && !success) {
-                attempt++;
-
-                // 現在の状態を確認
-                const beforeSettings = state.camera.track.getSettings();
-
+            // 強制適用ループ（focusModeがmanualになるまで繰り返す）
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 try {
-                    // ステップ1: まず近距離に設定してレンズを手前に動かす
+                    // ステップ1: 近距離に設定してレンズを手前に動かす
                     await state.camera.track.applyConstraints({
-                        advanced: [{
-                            focusMode: 'manual',
-                            focusDistance: nearDistance
-                        }]
+                        advanced: [{ focusMode: 'manual', focusDistance: nearDistance }]
                     });
-
-                    // レンズが動くのを待つ
                     await new Promise(resolve => setTimeout(resolve, 300));
 
                     // ステップ2: 目標距離（∞）に設定してレンズを奥に動かす
                     await state.camera.track.applyConstraints({
-                        advanced: [{
-                            focusMode: 'manual',
-                            focusDistance: targetDistance
-                        }]
+                        advanced: [{ focusMode: 'manual', focusDistance: targetDistance }]
                     });
+                } catch (e) { /* リトライ */ }
 
-                } catch (e) {
-                }
-
-                // 設定反映待機
                 await new Promise(resolve => setTimeout(resolve, intervalMs));
 
-                // 適用後の状態を確認
-                const afterSettings = state.camera.track.getSettings();
-
                 // focusModeがmanualになったら成功
-                if (afterSettings.focusMode === 'manual') {
-                    success = true;
+                if (state.camera.track.getSettings().focusMode === 'manual') {
+                    break;
                 }
-            }
-
-            if (!success) {
             }
 
             // watchdog開始
@@ -1270,7 +1222,6 @@
          * focusModeがmanualでなくなったら修復
          */
         function startFocusWatchdog() {
-
             state.camera.watchdogId = setInterval(async () => {
                 if (!state.camera.track) return;
 
