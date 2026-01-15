@@ -346,8 +346,7 @@
             VIDEO_HEIGHT: 720,
 
             // フォーカス設定（API値）
-            // 注意: Chromebookのカメラでは設定値10以上で実際のfocusDistanceがInfinityになる
-            FOCUS_INFINITY_VALUE: 10,    // ∞モードで使用する値（これ以上で実際にInfinityになる）
+            FOCUS_INFINITY_VALUE: 5,     // ∞モードで使用する値（MFの最大値と同じ）
             FOCUS_MIN_API: 0.02,         // スライダー最小値
             FOCUS_MAX_API: 5,            // スライダー最大値（実効範囲）
 
@@ -1364,8 +1363,7 @@
 
         /**
          * ∞モードのフォーカス設定が成功したか検証
-         * 条件: focusMode === 'manual' かつ (focusDistance > 5 または Infinity)
-         * ※MFスライダーの最大値は5なので、5より大きければ∞モードと判断
+         * 条件: focusMode === 'manual' かつ (focusDistance >= 5 または Infinity)
          */
         function verifyInfinityFocus(settings) {
             if (settings.focusMode !== 'manual') {
@@ -1374,8 +1372,8 @@
             }
 
             const distance = settings.focusDistance;
-            // Infinityまたは5より大きければ成功（MFのMAX=5なので、それを超えていれば∞）
-            const isFarEnough = !isFinite(distance) || distance > CONFIG.FOCUS_MAX_API;
+            // Infinityまたは5以上なら成功
+            const isFarEnough = !isFinite(distance) || distance >= CONFIG.FOCUS_MAX_API;
             debugLog(`∞検証: mode=${settings.focusMode}, distance=${distance}, isFarEnough=${isFarEnough}`);
             return isFarEnough;
         }
