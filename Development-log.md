@@ -599,12 +599,100 @@ function startFocusWatchdog() {
 }
 ```
 
-##### 次のステップ
+##### 初回起動時のfocusDistance問題の解決
 
-初回起動時のfocusDistance問題を解決するため、以下のアプローチを検討：
+**解決策**: 2段階フォーカス設定（近距離→遠距離）
 
-1. **カメラ安定化待機時間の延長**: 現在3秒 → より長く待機してからフォーカス設定
-2. **focusDistance検証の追加**: focusModeだけでなくfocusDistanceも確認
-3. **強制的なレンズ移動**: 一度近距離（0.1など）に設定してから目標距離に設定
+```javascript
+// ステップ1: 近距離に設定してレンズを手前に動かす
+await track.applyConstraints({
+    advanced: [{ focusMode: 'manual', focusDistance: 0.02 }]
+});
+await new Promise(resolve => setTimeout(resolve, 300));
+
+// ステップ2: 目標距離（∞）に設定してレンズを奥に動かす
+await track.applyConstraints({
+    advanced: [{ focusMode: 'manual', focusDistance: 5 }]
+});
+```
+
+**理由**: AFで合わせたピント位置と目標距離が近い場合、レンズが物理的に動かない。一度逆方向に動かすことで確実にレンズを移動させる。
+
+---
+
+#### コードリファクタリング（5フェーズ）
+
+デバッグ機能を削除し、コードを整理・最適化するため、5フェーズに分けてリファクタリングを実施。
+
+##### フェーズ1: デバッグパネル削除
+
+**削除内容:**
+- デバッグパネルのCSS（43行）
+- デバッグパネルのHTML（19行）
+- デバッグ関連のJavaScript関数
+
+**結果**: 1542行 → 1375行（167行削減）
+
+##### フェーズ2: CONFIG.DEBUG確認
+
+`CONFIG.DEBUG = false` で動作確認。問題なし。
+
+##### フェーズ3: debugLog削除
+
+**削除内容:**
+- `CONFIG.DEBUG` 定数
+- `debugLog()` 関数
+- 63箇所の `debugLog()` 呼び出し
+
+**結果**: 1375行 → 1302行（74行削減）
+
+##### フェーズ4: 未使用コード削除
+
+**削除内容:**
+- `CONFIG.Z_INDEX_UI`, `CONFIG.Z_INDEX_ERROR` 定数
+- `state.camera.focusDistanceMax` 変数
+- `stopFocusWatchdog()` 未使用関数
+- 関連するCSSコメント
+
+**結果**: 1302行 → 1287行（15行削減）
+
+##### フェーズ5: 構造最適化
+
+**実施内容:**
+- 空のcatch/elseブロックを整理
+- 未使用変数を削除（`success`, `settings`, `beforeSettings`）
+- 不要な空行を削除
+- `applyInitialFocus`をforループに簡略化
+- 古くなったHTMLコメントを更新
+
+**結果**: 1287行 → 1238行（49行削減）
+
+##### 追加修正: 整合性チェック
+
+**修正内容:**
+- `CONFIG.FOCUS_MAX_API` を復活（スライダー最大値用、一貫性のため）
+- `checkCameraCapabilities` でCONFIG定数を一貫使用
+- `state.camera.targetFocusDistance` を5に修正（`FOCUS_INFINITY_VALUE`と一致）
+
+**最終結果**: 1238行 → 1235行（3行削減）
+
+##### リファクタリング成果サマリー
+
+| フェーズ | 内容 | 削減行数 |
+|---------|------|---------|
+| 1 | デバッグパネル削除 | 167行 |
+| 2 | DEBUG=false確認 | 0行 |
+| 3 | debugLog削除 | 74行 |
+| 4 | 未使用コード削除 | 15行 |
+| 5 | 構造最適化 | 49行 |
+| 追加 | 整合性修正 | 3行 |
+| **合計** | | **307行（19.9%減）** |
+
+**最終コード品質:**
+- 総行数: 1235行
+- 関数数: 32関数
+- 全CONFIG定数が使用されている
+- 全state変数が使用されている
+- 未使用コードなし
 
 ---

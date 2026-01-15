@@ -3,7 +3,7 @@
 **Claude Code向け 完全実装ガイド**
 
 作成日: 2025年1月14日
-バージョン: 1.2（2026年1月14日更新）
+バージョン: 1.3（2026年1月15日更新）
 
 ---
 
@@ -25,8 +25,8 @@
 - 動画書き出し機能（MP4形式、1ループ自動撮影）
 
 ### 1.5 新規追加機能
-- AF（オートフォーカス）/ MF（マニュアルフォーカス）切り替え
-- MF時のフォーカス距離調整（2cm〜100cm）
+- ∞（遠景固定）/ MF（マニュアルフォーカス）切り替え
+- MF時のフォーカス距離調整（スライダー操作）
 
 ---
 
@@ -100,32 +100,47 @@
 | 言語 | HTML5, CSS3, JavaScript (ES6+) | フレームワーク不要 |
 | カメラAPI | MediaDevices.getUserMedia() | WebRTC標準API |
 | 描画 | Canvas API | 2D Context使用 |
-| 録画 | WebCodecs API + mp4-muxer | MP4形式出力 |
+| 録画 | h264-mp4-encoder (WASM) | MP4形式出力、SharedArrayBuffer不要 |
 | アニメーション | requestAnimationFrame | 60fps対応 |
 
 ### 3.2 フォーカス制御API
 
 `MediaStreamTrack.applyConstraints()`を使用してフォーカスを制御する。
 
-**オートフォーカス（AF）設定:**
+> ⚠️ **重要**: Chromebookでは`focusMode`と`focusDistance`を**同時に**`advanced`オプションで設定する必要がある。別々に設定するとAFが維持される。
+
+**∞モード（遠景固定）設定:**
 ```javascript
-track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] })
+// 2段階設定（レンズを確実に動かすため）
+// ステップ1: 近距離に設定
+await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: 0.02 }] });
+await new Promise(r => setTimeout(r, 300));
+// ステップ2: 遠距離に設定
+await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: 5 }] });
 ```
 
 **マニュアルフォーカス（MF）設定:**
 ```javascript
-track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value }] })
+await track.applyConstraints({
+    advanced: [{
+        focusMode: 'manual',
+        focusDistance: value  // 0.02〜5
+    }]
+});
 ```
 
 **focusDistance値の範囲:**
 
 | パラメータ | 値 | 説明 |
 |-----------|-----|------|
-| 最小値 | 0.02（2cm） | 最も近い位置（マクロ） |
-| 最大値 | 1.0（100cm） | 最も遠い位置 |
-| 単位 | メートル | 0.01 = 1cm |
+| 最小値 | 0.02 | 最も近い位置（マクロ） |
+| 最大値 | 5 | 最も遠い位置（∞モード） |
+| 単位 | メートル | API値そのまま使用 |
 
-> 💡 **実装のヒント**: カメラの能力を事前に`getCapabilities()`で取得し、`focusDistance`のmin/maxを確認すること。サポートされていない場合はUIを無効化する。
+> 💡 **実装のヒント**:
+> - カメラの能力を事前に`getCapabilities()`で取得し、サポートを確認
+> - focusModeがmanualになったかを`getSettings()`で検証
+> - watchdog（2秒間隔）でAF自動復帰を防止
 
 ### 3.3 動画書き出し仕様
 
@@ -137,7 +152,7 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 | ファイル名 | fretanime_[YYYYMMDD_HHMMSS].mp4 |
 | 録画方式 | 1ループ自動撮影（ボタン押下で4フレーム撮影） |
 
-> **実装メモ**: WebCodecs API (VideoEncoder) + mp4-muxer ライブラリを使用してMP4を生成。
+> **実装メモ**: h264-mp4-encoder (WASM) を使用してMP4を生成。Chromebookでも動作する（SharedArrayBuffer不要）。
 
 ---
 
@@ -195,16 +210,15 @@ track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: value 
 
 | 要素 | 種類 | 動作 |
 |------|------|------|
-| AF/MFトグルボタン | ボタン | クリックでAF⇄MF切替。現在のモードを表示 |
-| フォーカススライダー | range input | MF時のみ有効。2cm〜100cmを調整（幅400px） |
-| 距離表示 | テキスト | 現在のフォーカス距離を数値で表示（例：50cm） |
+| ∞/MFトグルボタン | ボタン | クリックで∞⇄MF切替。現在のモードを表示 |
+| フォーカススライダー | range input | MF時のみ有効。幅500px |
 
 **状態による表示変化:**
 
-| 状態 | トグルボタン表示 | スライダー | 距離表示 |
-|------|-----------------|-----------|----------|
-| AFモード | 「AF」（アクティブ色） | 無効（グレーアウト） | 「AUTO」 |
-| MFモード | 「MF」（アクティブ色） | 有効（操作可能） | 「XXcm」 |
+| 状態 | トグルボタン表示 | スライダー |
+|------|-----------------|-----------|
+| ∞モード | 「∞」（アクティブ色） | 無効（グレーアウト） |
+| MFモード | 「MF」（アクティブ色） | 有効（操作可能） |
 
 ### 4.4 既存ボタン仕様（オリジナル踏襲）
 

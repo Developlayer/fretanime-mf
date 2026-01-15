@@ -17,9 +17,10 @@
 - インカメラ（画面側）は使用しない
 
 ### フォーカス制御
-- AF: `focusMode: 'continuous'`
-- MF: `focusMode: 'manual'` + `focusDistance: value`
-- focusDistance範囲: 0.02〜1.0（メートル単位、2cm〜100cm）
+- ∞モード: `focusMode: 'manual'` + `focusDistance: 5`（遠景固定）
+- MFモード: `focusMode: 'manual'` + `focusDistance: 0.02〜5`
+- **重要**: `advanced`オプションでfocusModeとfocusDistanceを同時設定すること
+- focusDistance範囲: 0.02〜5（メートル単位）
 
 ### 分割モード
 1. **田んぼ（grid）**: 2x2の4分割
@@ -49,23 +50,30 @@
 
 ### 設定定数（CONFIG）
 ```javascript
-CONFIG.DEBUG = false;  // true でデバッグログ有効化
-CONFIG.FRAME_INTERVAL_MS = 250;  // アニメーション間隔
-CONFIG.TOTAL_FRAMES = 4;  // フレーム数
+CONFIG.FRAME_INTERVAL_MS = 250;      // アニメーション間隔
+CONFIG.TOTAL_FRAMES = 4;             // フレーム数
+CONFIG.VIDEO_WIDTH = 1280;           // カメラ解像度（幅）
+CONFIG.VIDEO_HEIGHT = 720;           // カメラ解像度（高さ）
+CONFIG.FOCUS_INFINITY_VALUE = 5;     // ∞モードで使用する値
+CONFIG.FOCUS_MIN_API = 0.02;         // スライダー最小値
+CONFIG.FOCUS_MAX_API = 5;            // スライダー最大値
+CONFIG.VIDEO_FPS = 4;                // 録画フレームレート
+CONFIG.VIDEO_QUALITY = 26;           // h264エンコード品質
 ```
 
 ### 状態管理（state）
 ```javascript
-state.elements    // DOM要素のキャッシュ
-state.camera      // カメラ関連の状態
-state.animation   // アニメーション関連の状態
-state.recording   // 録画関連の状態
-state.display     // 表示設定
+state.elements    // DOM要素のキャッシュ（video, canvas, ctx, ボタン類）
+state.camera      // カメラ関連（track, focusMode, targetFocusDistance, watchdogId）
+state.animation   // アニメーション関連（isPlaying, currentFrame, intervalId）
+state.recording   // 録画関連（isRecording, isConverting, capturedFrames）
+state.display     // 表示設定（gridMode）
 ```
 
-### デバッグモード
-`CONFIG.DEBUG = true` に設定すると、コンソールに詳細ログが出力される。
-本番環境では `false` に設定。
+### コード統計
+- **総行数**: 1235行（リファクタリング後）
+- **関数数**: 32関数
+- **構造**: CONFIG定数、state管理、UI関数、ロジック関数に明確分離
 
 ## ファイル構成
 ```
@@ -91,3 +99,22 @@ fretanime-mf/
 2. **3段階カメラフォールバック**: exact → prefer → 制約なし
 3. **h264-mp4-encoder**: FFmpegやWebCodecs APIは使用しない（SharedArrayBuffer/ハードウェア依存問題）
 4. **ユーザー操作リトライ**: video.play()失敗時のclick/touchstartリスナー
+5. **フォーカス設定のadvancedオプション**: focusModeとfocusDistanceを同時に設定
+6. **2段階フォーカス設定**: ∞モードでは近距離→遠距離の順で設定（レンズを確実に動かすため）
+7. **フォーカスwatchdog**: 2秒ごとにfocusModeを監視・修復（AF自動復帰防止）
+
+### フォーカス制御の教訓
+
+```javascript
+// ❌ ダメな方式（別々に設定するとAFが維持される）
+await track.applyConstraints({ focusMode: 'manual' });
+await track.applyConstraints({ focusDistance: value });
+
+// ✅ 正しい方式（advancedオプションで同時設定）
+await track.applyConstraints({
+    advanced: [{
+        focusMode: 'manual',
+        focusDistance: value
+    }]
+});
+```
