@@ -143,7 +143,7 @@
         }
 
         .focus-slider {
-            width: 400px;
+            width: 500px;
             height: 12px;
             -webkit-appearance: none;
             appearance: none;
@@ -168,13 +168,6 @@
 
         .focus-slider:disabled::-webkit-slider-thumb {
             cursor: not-allowed;
-        }
-
-        .focus-value {
-            min-width: 110px;
-            color: var(--color-text);
-            font-size: 24px;
-            text-align: center;
         }
 
         /* ===== 区切り線 ===== */
@@ -278,7 +271,6 @@
             <button id="focusModeBtn" disabled>AF</button>
             <input type="range" id="focusSlider" class="focus-slider"
                    min="1" max="100" value="50" step="1" disabled>
-            <span id="focusValue" class="focus-value">AUTO</span>
         </div>
 
         <!-- 区切り -->
@@ -416,9 +408,8 @@
                 // UIボタン
                 playStopBtn: null,         // 再生/停止ボタン
                 recordBtn: null,           // 録画ボタン
-                focusModeBtn: null,        // AF/MFボタン
+                focusModeBtn: null,        // AF/MF/∞ボタン
                 focusSlider: null,         // フォーカススライダー
-                focusValue: null,          // フォーカス値表示
                 errorMessage: null,        // エラーメッセージ
                 gridButtons: null,         // グリッドボタン配列
                 // デバッグパネル
@@ -437,7 +428,9 @@
                 track: null,               // カメラのビデオトラック
                 focusSupported: false,     // フォーカス制御サポートフラグ
                 mfSupported: false,        // マニュアルフォーカスサポートフラグ
-                focusMode: 'continuous'    // フォーカスモード: 'continuous' or 'manual'
+                focusMode: 'continuous',   // フォーカスモード: 'continuous' | 'manual' | 'infinity'
+                focusDistanceMin: 0,       // カメラのfocusDistance最小値
+                focusDistanceMax: Infinity // カメラのfocusDistance最大値
             },
 
             // アニメーション関連
@@ -473,7 +466,6 @@
             state.elements.recordBtn = document.getElementById('recordBtn');
             state.elements.focusModeBtn = document.getElementById('focusModeBtn');
             state.elements.focusSlider = document.getElementById('focusSlider');
-            state.elements.focusValue = document.getElementById('focusValue');
             state.elements.errorMessage = document.getElementById('errorMessage');
             state.elements.gridButtons = document.querySelectorAll('.grid-buttons button');
 
@@ -759,6 +751,23 @@
 
                 // マニュアルフォーカスのサポートを確認
                 state.camera.mfSupported = supportedModes.includes('manual');
+
+                // カメラのfocusDistance範囲を保存
+                if (capabilities.focusDistance) {
+                    state.camera.focusDistanceMin = capabilities.focusDistance.min || 0;
+                    state.camera.focusDistanceMax = capabilities.focusDistance.max || Infinity;
+                    debugLog(`カメラのfocusDistance範囲: ${state.camera.focusDistanceMin} - ${state.camera.focusDistanceMax}`);
+
+                    // スライダーの範囲を設定（Infinityの場合は100を上限とする）
+                    const sliderMin = state.camera.focusDistanceMin;
+                    const sliderMax = isFinite(state.camera.focusDistanceMax)
+                        ? state.camera.focusDistanceMax
+                        : 100;
+                    state.elements.focusSlider.min = sliderMin;
+                    state.elements.focusSlider.max = sliderMax;
+                    state.elements.focusSlider.step = capabilities.focusDistance.step || 0.01;
+                    state.elements.focusSlider.value = (sliderMin + sliderMax) / 2;
+                }
 
                 // フォーカスUIを有効化
                 state.elements.focusModeBtn.disabled = false;
@@ -1283,12 +1292,12 @@
             debugLog('ファイル保存:', filename);
         }
 
-        // ===== フォーカスモードの切り替え =====
+        // ===== フォーカスモードの切り替え（AF → MF → ∞ → AF） =====
         async function toggleFocusMode() {
             if (!state.camera.focusSupported) return;
 
             if (state.camera.focusMode === 'continuous') {
-                // MFモードに切り替え
+                // AF → MF に切り替え
                 if (!state.camera.mfSupported) {
                     debugLog('マニュアルフォーカスは未サポート');
                     return;
@@ -1300,28 +1309,40 @@
                 state.elements.focusSlider.disabled = false;
 
                 // 現在のスライダー値でフォーカスを設定
-                const sliderValue = parseInt(state.elements.focusSlider.value, 10);
-                const apiValue = sliderToApiValue(sliderValue);
-                const displayValue = String(sliderValue);
+                const apiValue = parseFloat(state.elements.focusSlider.value);
                 await setFocusDistance(apiValue);
-                state.elements.focusValue.textContent = displayValue;
 
                 // デバッグパネルを更新
-                updateDebugFocusValues(apiValue, sliderValue, displayValue);
+                updateDebugFocusValues(apiValue, apiValue, 'MF');
 
                 debugLog('マニュアルフォーカスモードに切り替え');
+
+            } else if (state.camera.focusMode === 'manual') {
+                // MF → ∞ に切り替え
+                state.camera.focusMode = 'infinity';
+                state.elements.focusModeBtn.textContent = '∞';
+                state.elements.focusModeBtn.classList.add('active');
+                state.elements.focusSlider.disabled = true;
+
+                // Infinityでフォーカスを固定
+                await setFocusDistance(Infinity);
+
+                // デバッグパネルを更新
+                updateDebugFocusValues(Infinity, '-', '∞');
+
+                debugLog('∞（無限遠）モードに切り替え');
+
             } else {
-                // AFモードに切り替え
+                // ∞ → AF に切り替え
                 state.camera.focusMode = 'continuous';
                 state.elements.focusModeBtn.textContent = 'AF';
                 state.elements.focusModeBtn.classList.remove('active');
                 state.elements.focusSlider.disabled = true;
-                state.elements.focusValue.textContent = 'AUTO';
 
                 await setAutoFocus();
 
                 // デバッグパネルを更新（AFモード）
-                updateDebugFocusValues('AUTO', '-', 'AUTO');
+                updateDebugFocusValues('AUTO', '-', 'AF');
 
                 debugLog('オートフォーカスモードに切り替え');
             }
@@ -1331,15 +1352,11 @@
         async function handleFocusSliderChange(event) {
             if (state.camera.focusMode !== 'manual') return;
 
-            const sliderValue = parseInt(event.target.value, 10);
-            const apiValue = sliderToApiValue(sliderValue);
-            const displayValue = String(sliderValue);
-
-            state.elements.focusValue.textContent = displayValue;
+            const apiValue = parseFloat(event.target.value);
             await setFocusDistance(apiValue);
 
             // デバッグパネルを更新
-            updateDebugFocusValues(apiValue, sliderValue, displayValue);
+            updateDebugFocusValues(apiValue, apiValue, 'MF');
         }
 
         /**
