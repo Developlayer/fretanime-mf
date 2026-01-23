@@ -297,15 +297,16 @@ body {
 
 ### 5.3 グリッド分割ロジック
 
-**田んぼモード（Grid）**
+**田んぼモード（Grid）** ※時計回りの再生順序
 ```
-[0] [1]    インデックス配置
-[2] [3]
+[0] → [1]    再生順序: 0→1→2→3（時計回り）
+ ↑     ↓
+[3] ← [2]
 
-フレーム0: (0, 0) から (width/2, height/2)
-フレーム1: (width/2, 0) から (width, height/2)
-フレーム2: (0, height/2) から (width/2, height)
-フレーム3: (width/2, height/2) から (width, height)
+フレーム0: 左上 (0, 0) から (width/2, height/2)
+フレーム1: 右上 (width/2, 0) から (width, height/2)
+フレーム2: 右下 (width/2, height/2) から (width, height)
+フレーム3: 左下 (0, height/2) から (width/2, height)
 ```
 
 **タテ短冊モード（Column）**

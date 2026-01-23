@@ -732,13 +732,19 @@
             let sx, sy, sw, sh;
 
             if (state.display.gridMode === 'grid') {
-                // 田んぼモード: 2x2
-                const col = frameIndex % 2;
-                const row = Math.floor(frameIndex / 2);
+                // 田んぼモード: 2x2 時計回り（左上→右上→右下→左下）
+                // フレーム0: 左上, フレーム1: 右上, フレーム2: 右下, フレーム3: 左下
+                const GRID_POSITIONS = [
+                    { col: 0, row: 0 }, // フレーム0: 左上
+                    { col: 1, row: 0 }, // フレーム1: 右上
+                    { col: 1, row: 1 }, // フレーム2: 右下
+                    { col: 0, row: 1 }  // フレーム3: 左下
+                ];
+                const pos = GRID_POSITIONS[frameIndex];
                 sw = vw / 2;
                 sh = vh / 2;
-                sx = col * sw;
-                sy = row * sh;
+                sx = pos.col * sw;
+                sy = pos.row * sh;
             } else if (state.display.gridMode === 'column') {
                 // タテ短冊モード: 縦4分割
                 sw = vw / 4;
